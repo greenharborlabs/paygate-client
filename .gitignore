@@ -1,0 +1,38 @@
+.DS_Store
+
+# Local secrets and environment files
+.env
+.env.*
+
+# Local paygate config overrides
+paygate.*
+paygate-client.*
+!paygate.example.yml
+!paygate.example.yaml
+!paygate.sample.yml
+!paygate.sample.yaml
+!paygate-client.example.yml
+!paygate-client.example.yaml
+!paygate-client.sample.yml
+!paygate-client.sample.yaml
+paygate.local.*
+paygate-client.local.*
+
+# Local secrets and runtime state
+*.pem
+*.key
+secrets.*
+.gstack/
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+build/
+dist/

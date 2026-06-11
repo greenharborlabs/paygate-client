@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paygate-client"
+version = "0.1.0"
+description = "Command-line client for Paygate."
+requires-python = ">=3.9"
+dependencies = [
+    "httpx>=0.27,<1",
+    "PyYAML>=6.0,<7",
+    "typer>=0.12,<1",
+]
+
+[project.scripts]
+paygate = "paygate_client.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10,<2",
+    "poethepoet>=0.27,<1",
+    "pytest>=8.2,<9",
+    "types-PyYAML>=6.0.12,<7",
+    "ruff>=0.5,<1",
+    "tomli>=2,<3; python_version < '3.11'",
+]
+
+[tool.setuptools.packages.find]
+include = ["paygate_client*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.poe.tasks]
+test = "pytest"
+format = "ruff format ."
+lint = "ruff check ."
+typecheck = "mypy"
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.9"
+packages = ["paygate_client"]
+strict = true

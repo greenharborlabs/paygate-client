@@ -1,0 +1,166 @@
+from dataclasses import asdict
+
+import pytest
+
+from paygate_client.config import (
+    MissingConfigError,
+    MissingSecretError,
+    UnknownBackendError,
+    ValidationError,
+    load_config,
+)
+
+
+def test_phoenixd_config_resolves_password_only_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAYGATE_CLIENT_PHOENIXD_PASSWORD", "phoenix-secret")
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: phoenixd
+phoenixd:
+  url: "http://127.0.0.1:9740"
+  password_env: "PAYGATE_CLIENT_PHOENIXD_PASSWORD"
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+protocol:
+  preferred: Payment
+  allow_l402: true
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.payer.backend == "phoenixd"
+    assert config.phoenixd.password_env.env_var == "PAYGATE_CLIENT_PHOENIXD_PASSWORD"
+    assert config.phoenixd.password_env.resolve() == "phoenix-secret"
+    rendered = f"{config!r} {config} {asdict(config)}"
+    assert "phoenix-secret" not in rendered
+    assert "PAYGATE_CLIENT_PHOENIXD_PASSWORD" in rendered
+
+
+def test_missing_config_file_raises_typed_actionable_error(tmp_path):
+    missing = tmp_path / "missing.yml"
+
+    with pytest.raises(MissingConfigError, match="Config file not found"):
+        load_config(missing)
+
+
+def test_unknown_backend_raises_typed_error(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: lnurl
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(UnknownBackendError, match="payer.backend"):
+        load_config(config_path)
+
+
+def test_missing_phoenixd_password_env_raises_missing_secret(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: phoenixd
+phoenixd:
+  url: "http://127.0.0.1:9740"
+  password_env: "PAYGATE_CLIENT_PHOENIXD_PASSWORD"
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MissingSecretError, match="PAYGATE_CLIENT_PHOENIXD_PASSWORD"):
+        load_config(config_path, env={})
+
+
+def test_negative_max_request_sats_fails_before_payer_code(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: test-mode
+policy:
+  max_request_sats: -1
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="policy.max_request_sats"):
+        load_config(config_path)
+
+
+def test_empty_allowlists_fail_closed(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: test-mode
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts: []
+  allowed_services: []
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="allowed_hosts"):
+        load_config(config_path)
+
+
+def test_protocol_defaults_do_not_enable_l402(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: test-mode
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.protocol.preferred == "Payment"
+    assert config.protocol.allow_l402 is False
