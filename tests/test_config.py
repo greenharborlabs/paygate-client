@@ -46,6 +46,61 @@ protocol:
     assert "PAYGATE_CLIENT_PHOENIXD_PASSWORD" in rendered
 
 
+def test_phoenixd_fee_limit_parameter_defaults_to_none(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAYGATE_CLIENT_PHOENIXD_PASSWORD", "phoenix-secret")
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: phoenixd
+phoenixd:
+  url: "http://127.0.0.1:9740"
+  password_env: "PAYGATE_CLIENT_PHOENIXD_PASSWORD"
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.phoenixd.fee_limit_parameter is None
+
+
+def test_phoenixd_fee_limit_parameter_loads_when_configured(monkeypatch, tmp_path):
+    monkeypatch.setenv("PAYGATE_CLIENT_PHOENIXD_PASSWORD", "phoenix-secret")
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: phoenixd
+phoenixd:
+  url: "http://127.0.0.1:9740"
+  password_env: "PAYGATE_CLIENT_PHOENIXD_PASSWORD"
+  fee_limit_parameter: "maxFeeSat"
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+
+    assert config.phoenixd.fee_limit_parameter == "maxFeeSat"
+
+
 def test_missing_config_file_raises_typed_actionable_error(tmp_path):
     missing = tmp_path / "missing.yml"
 

@@ -16,6 +16,14 @@ _AUTH_TEXT_RE = re.compile(
     r"(?P<credential>[^\"'\s,}]+)",
     re.IGNORECASE,
 )
+_AUTH_PARAM_RE = re.compile(
+    r"(?P<name>\b(?:credential|macaroon|password|token)\b)"
+    r"(?P<separator>\s*=\s*)"
+    r"(?P<quote>[\"']?)"
+    r"(?P<credential>[^\"'\s,]+)"
+    r"(?P=quote)",
+    re.IGNORECASE,
+)
 
 _SECRET_KEY_GROUPS: tuple[tuple[str, ...], ...] = (
     ("password",),
@@ -56,6 +64,13 @@ def _redact_authorization_value(value: str) -> str:
 
 def _redact_authorization_text(match: re.Match[str]) -> str:
     return f"{match.group('prefix')}{match.group('scheme')} {REDACTED_CREDENTIAL}"
+
+
+def _redact_auth_param(match: re.Match[str]) -> str:
+    return (
+        f"{match.group('name')}{match.group('separator')}"
+        f"{match.group('quote')}{REDACTED_CREDENTIAL}{match.group('quote')}"
+    )
 
 
 def _tokenize_key(key: str) -> list[str]:
@@ -102,6 +117,7 @@ def redact_text(
         redacted = redacted.replace(secret, REDACTED_SECRET)
 
     redacted = _AUTH_TEXT_RE.sub(_redact_authorization_text, redacted)
+    redacted = _AUTH_PARAM_RE.sub(_redact_auth_param, redacted)
     redacted = _HEX_64_OR_LONGER_RE.sub(REDACTED_PREIMAGE, redacted)
     if redact_invoices:
         redacted = _INVOICE_RE.sub(REDACTED_INVOICE, redacted)
