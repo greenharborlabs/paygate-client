@@ -1,5 +1,8 @@
 import copy
 
+import httpx
+
+from paygate_client.http import serialize_response
 from paygate_client.redaction import redact_error_envelope, redact_text
 
 
@@ -100,3 +103,36 @@ def test_authorization_text_preserves_scheme_with_spaces_and_case():
     }
     redacted = redact_error_envelope(envelope)
     assert redacted["proxy_authorization"] == "payment [REDACTED_CREDENTIAL]"
+
+
+def test_serialized_l402_response_redacts_www_authenticate_macaroon_and_token():
+    response = httpx.Response(
+        402,
+        headers={
+            "WWW-Authenticate": (
+                'L402 token="tok_123", macaroon="mac_456", invoice="lnbc1l402"'
+            )
+        },
+        json={"error": "payment required"},
+    )
+
+    serialized = serialize_response(response)
+
+    rendered = repr(serialized)
+    assert "tok_123" not in rendered
+    assert "mac_456" not in rendered
+    assert "lnbc1l402" in rendered
+    assert (
+        serialized["headers"]["www-authenticate"]
+        == 'L402 token="[REDACTED_CREDENTIAL]", '
+        'macaroon="[REDACTED_CREDENTIAL]", invoice="lnbc1l402"'
+    )
+
+
+def test_serialized_binary_non_json_response_uses_base64_body():
+    response = httpx.Response(200, content=b"\xff\xfe\x00")
+
+    serialized = serialize_response(response)
+
+    assert serialized["bodyBase64"] == "//4A"
+    assert "body" not in serialized

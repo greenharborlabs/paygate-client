@@ -62,6 +62,7 @@ class PayerConfig:
 class PhoenixdConfig:
     url: str
     password_env: SecretRef
+    fee_limit_parameter: str | None = None
 
     def resolve_password(self, env: Mapping[str, str] | None = None) -> str:
         return self.password_env.resolve(env)
@@ -177,8 +178,17 @@ def _load_phoenixd(raw: object, env: Mapping[str, str]) -> PhoenixdConfig:
     password_ref = SecretRef(
         _require_string(phoenixd, "password_env", "phoenixd.password_env")
     )
+    fee_limit_parameter = None
+    if phoenixd.get("fee_limit_parameter") is not None:
+        fee_limit_parameter = _require_string(
+            phoenixd, "fee_limit_parameter", "phoenixd.fee_limit_parameter"
+        )
     password_ref.resolve(env)
-    return PhoenixdConfig(url=url, password_env=password_ref)
+    return PhoenixdConfig(
+        url=url,
+        password_env=password_ref,
+        fee_limit_parameter=fee_limit_parameter,
+    )
 
 
 def _load_lnd(raw: object, env: Mapping[str, str]) -> LndConfig:
