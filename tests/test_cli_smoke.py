@@ -7,6 +7,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
 
 from typer.testing import CliRunner
 
+from paygate_client import __version__
 from paygate_client.cli import app
 
 
@@ -15,6 +16,13 @@ def test_cli_help_resolves() -> None:
 
     assert result.exit_code == 0
     assert "Paygate command-line client." in result.output
+
+
+def test_cli_version_resolves_without_subcommand() -> None:
+    result = CliRunner().invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == __version__
 
 
 def test_pyproject_declares_tooling_commands() -> None:

@@ -119,19 +119,23 @@ def parse_challenges(
     """Parse repeated WWW-Authenticate values and select the configured protocol."""
 
     parsed: list[ParsedChallenge] = []
+    errors: list[ChallengeError] = []
     disabled_l402 = False
     current_time = _to_epoch_seconds(now) if now is not None else time.time()
 
     for header_value in _header_values(headers):
         for raw_challenge in _split_challenges(header_value):
-            scheme, params = _parse_challenge(raw_challenge)
-            if scheme == "Payment":
-                parsed.append(_parse_payment(params, current_time))
-            elif scheme == "L402":
-                if not protocol_config.allow_l402:
-                    disabled_l402 = True
-                    continue
-                parsed.append(_parse_l402(params))
+            try:
+                scheme, params = _parse_challenge(raw_challenge)
+                if scheme == "Payment":
+                    parsed.append(_parse_payment(params, current_time))
+                elif scheme == "L402":
+                    if not protocol_config.allow_l402:
+                        disabled_l402 = True
+                        continue
+                    parsed.append(_parse_l402(params))
+            except ChallengeError as exc:
+                errors.append(exc)
 
     preferred = protocol_config.preferred
     for challenge in parsed:
@@ -142,6 +146,8 @@ def parse_challenges(
 
     if disabled_l402:
         raise ProtocolDisabledError("L402 challenge received but L402 is disabled")
+    if errors:
+        raise errors[0]
     raise NoSupportedChallengeError("response did not include a supported challenge")
 
 
@@ -290,20 +296,23 @@ def _parse_payment(params: Mapping[str, str], now: float) -> PaymentChallenge:
         MalformedMPPRequestError,
         "Payment request payload is malformed",
     )
-    invoice = _string_field(request_payload, "invoice")
+    method_details = request_payload.get("methodDetails", {})
+    if not isinstance(method_details, dict):
+        raise MalformedMPPRequestError("Payment methodDetails must be an object")
+
+    invoice = _string_field(request_payload, "invoice") or _string_field(
+        method_details, "invoice"
+    )
     if invoice is None:
         raise MissingInvoiceError("Payment request payload is missing invoice")
 
     amount_sats = _amount_sats_field(request_payload)
 
-    method_details = request_payload.get("methodDetails", {})
-    if not isinstance(method_details, dict):
-        raise MalformedMPPRequestError("Payment methodDetails must be an object")
     payment_hash = _string_field(method_details, "paymentHash")
     if payment_hash is None:
         payment_hash = _string_field(method_details, "payment_hash")
 
-    expires = _optional_int_param(params, "expires")
+    expires = _optional_expires_param(params, "expires")
     if expires is not None and expires <= now:
         raise ExpiredChallengeError("Payment challenge is expired")
 
@@ -422,6 +431,19 @@ def _amount_sats_field(source: Mapping[str, Any]) -> int:
             )
         amount_sats: int = value
         return amount_sats
+    amount = _string_field(source, "amount")
+    if amount is not None:
+        try:
+            amount_sats = int(amount)
+        except ValueError as exc:
+            raise MalformedMPPRequestError(
+                "Payment request payload amount must be a non-negative integer string"
+            ) from exc
+        if amount_sats < 0:
+            raise MalformedMPPRequestError(
+                "Payment request payload amount must be non-negative"
+            )
+        return amount_sats
     raise MissingAmountError("Payment request payload is missing amountSats")
 
 
@@ -433,6 +455,23 @@ def _optional_int_param(params: Mapping[str, str], key: str) -> int | None:
         return int(value)
     except ValueError as exc:
         raise MalformedHeaderError(f"auth param {key!r} must be an integer") from exc
+
+
+def _optional_expires_param(params: Mapping[str, str], key: str) -> int | None:
+    value = params.get(key)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MalformedHeaderError(
+            f"auth param {key!r} must be an integer or ISO-8601 timestamp"
+        ) from exc
+    return int(parsed.timestamp())
 
 
 def _to_epoch_seconds(now: datetime | int | float) -> float:

@@ -11,7 +11,8 @@ import httpx
 
 from paygate_client.challenges import (
     ChallengeError,
-    L402Challenge,
+    MissingAmountError,
+    MissingMPPRequestError,
     ParsedChallenge,
     parse_challenges,
 )
@@ -26,6 +27,7 @@ from paygate_client.http import (
     send_request,
     serialize_response,
 )
+from paygate_client.invoices import amount_sats_from_invoice, payment_hash_from_invoice
 from paygate_client.payers import (
     MissingPreimageError,
     Payer,
@@ -35,6 +37,7 @@ from paygate_client.payers import (
     PreimageVerificationError,
     RawPaymentResult,
     TestModePayer,
+    hash_preimage,
     verify_payment_result,
 )
 from paygate_client.payers.lnd_rest import LndRestPayer
@@ -52,6 +55,17 @@ class PaygateRequest:
     headers: Mapping[str, str] = field(default_factory=dict)
     body: str | bytes | None = None
     timeout: float | None = None
+
+
+@dataclass(frozen=True)
+class _PayableChallenge:
+    parsed: ParsedChallenge
+    invoice: str
+    amount_sats: int
+    payment_hash: str | None
+    service: str | None
+    metadata: Mapping[str, Any]
+    test_preimage: str | None
 
 
 def request_with_paygate(
@@ -110,21 +124,17 @@ def _request_with_paygate(
     except ChallengeError as exc:
         return _error("unsupported_402_challenge", str(exc), paid=False)
 
-    if isinstance(challenge, L402Challenge):
-        return _error(
-            "unsupported_402_challenge",
-            "L402 payment challenges do not include enough payment metadata yet",
-            paid=False,
-        )
-
-    challenge = _with_json_test_preimage(challenge, initial_response)
+    try:
+        payable_challenge = _to_payable_challenge(challenge, initial_response)
+    except ChallengeError as exc:
+        return _error("unsupported_402_challenge", str(exc), paid=False)
 
     try:
         approval = policy_engine.evaluate(
             PolicyRequest(
                 host=_host_port(request.url),
-                service=challenge.service,
-                amount_sats=challenge.amount_sats,
+                service=payable_challenge.service,
+                amount_sats=payable_challenge.amount_sats,
                 payer_backend=payer,
             )
         )
@@ -133,16 +143,16 @@ def _request_with_paygate(
 
     payment_result = None
     real_payment_committed = False
-    payer_invoked = challenge.test_preimage is None
+    payer_invoked = payable_challenge.test_preimage is None
     try:
         payment_result = _pay(
-            challenge, payer=payer, max_fee_sats=approval.max_fee_sats
+            payable_challenge, payer=payer, max_fee_sats=approval.max_fee_sats
         )
         if payer_invoked:
             approval.commit()
             real_payment_committed = True
         authorization = build_authorization(
-            challenge,
+            payable_challenge.parsed,
             payment_result.preimage_hex,
             source=config.payer.backend,
         )
@@ -168,7 +178,7 @@ def _request_with_paygate(
             approval.commit()
         return _success_paid(
             retry_response,
-            challenge=challenge,
+            challenge=payable_challenge.parsed,
             payment_result=payment_result,
             payer_backend=config.payer.backend,
         )
@@ -207,17 +217,66 @@ def _parse_challenge(
     )
 
 
-def _with_json_test_preimage(
-    challenge: ParsedPaymentChallenge,
+def _to_payable_challenge(
+    challenge: ParsedChallenge,
     response: httpx.Response,
-) -> ParsedPaymentChallenge:
-    if challenge.test_preimage is not None:
-        return challenge
+) -> _PayableChallenge:
+    body = _json_body(response)
+    if isinstance(challenge, ParsedPaymentChallenge):
+        payment_challenge = _with_json_test_preimage(challenge, body)
+        return _PayableChallenge(
+            parsed=payment_challenge,
+            invoice=payment_challenge.invoice,
+            amount_sats=payment_challenge.amount_sats,
+            payment_hash=payment_challenge.payment_hash,
+            service=payment_challenge.service,
+            metadata=dict(payment_challenge.request_payload),
+            test_preimage=payment_challenge.test_preimage,
+        )
+
+    amount_sats = amount_sats_from_invoice(challenge.invoice)
+    if amount_sats is None:
+        amount_sats = _find_amount_sats(body)
+    if amount_sats is None:
+        raise MissingAmountError("L402 invoice amount could not be determined")
+
+    test_preimage = _find_test_preimage(body)
+    payment_hash = payment_hash_from_invoice(challenge.invoice)
+    if payment_hash is None and test_preimage is not None:
+        payment_hash = hash_preimage(test_preimage)
+    if payment_hash is None:
+        raise MissingMPPRequestError(
+            "L402 invoice payment_hash could not be determined"
+        )
+
+    return _PayableChallenge(
+        parsed=challenge,
+        invoice=challenge.invoice,
+        amount_sats=amount_sats,
+        payment_hash=payment_hash,
+        service=None,
+        metadata={"invoice": challenge.invoice, "version": challenge.version},
+        test_preimage=test_preimage,
+    )
+
+
+def _json_body(response: httpx.Response) -> Mapping[str, Any] | None:
     try:
         body = response.json()
     except ValueError:
-        return challenge
+        return None
     if not isinstance(body, dict):
+        return None
+    return body
+
+
+def _with_json_test_preimage(
+    challenge: ParsedPaymentChallenge,
+    body: Mapping[str, Any] | None,
+) -> ParsedPaymentChallenge:
+    if challenge.test_preimage is not None:
+        return challenge
+    if body is None:
         return challenge
     test_preimage = _find_test_preimage(body)
     if test_preimage is None:
@@ -242,8 +301,26 @@ def _find_test_preimage(value: object) -> str | None:
     return None
 
 
+def _find_amount_sats(value: object) -> int | None:
+    if isinstance(value, dict):
+        for key in ("amountSats", "amount_sats"):
+            raw = value.get(key)
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+                return raw
+        for child in value.values():
+            found = _find_amount_sats(child)
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for child in value:
+            found = _find_amount_sats(child)
+            if found is not None:
+                return found
+    return None
+
+
 def _pay(
-    challenge: ParsedPaymentChallenge,
+    challenge: _PayableChallenge,
     *,
     payer: Payer,
     max_fee_sats: int,
@@ -253,7 +330,7 @@ def _pay(
         payment_hash=challenge.payment_hash,
         amount_sats=challenge.amount_sats,
         service=challenge.service,
-        metadata=dict(challenge.request_payload),
+        metadata=dict(challenge.metadata),
         test_preimage=challenge.test_preimage,
     )
     if challenge.test_preimage is not None:
@@ -341,13 +418,13 @@ def _success_unpaid(response: httpx.Response) -> dict[str, Any]:
 def _success_paid(
     response: httpx.Response,
     *,
-    challenge: ParsedPaymentChallenge,
+    challenge: ParsedChallenge,
     payment_result: PaymentResult,
     payer_backend: str,
 ) -> dict[str, Any]:
-    receipt = (
-        challenge.opaque_payload.get("receipt") if challenge.opaque_payload else None
-    )
+    receipt = None
+    if isinstance(challenge, ParsedPaymentChallenge) and challenge.opaque_payload:
+        receipt = challenge.opaque_payload.get("receipt")
     envelope: dict[str, Any] = {
         "ok": True,
         "paid": True,

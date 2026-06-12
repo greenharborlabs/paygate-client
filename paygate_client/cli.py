@@ -18,6 +18,7 @@ DEFAULT_CONFIG_PATH = Path("~/.config/paygate-client/config.yaml")
 
 app = typer.Typer(
     help="Paygate command-line client.",
+    invoke_without_command=True,
     no_args_is_help=True,
 )
 backend_app = typer.Typer(

@@ -89,6 +89,10 @@ def _payment_header(
     )
 
 
+def _l402_header(invoice: str = "lnbc1l402") -> str:
+    return f'L402 token="tok_123", invoice="{invoice}", version="1"'
+
+
 def _config(*, max_request_sats: int = 100) -> PaygateConfig:
     return PaygateConfig(
         payer=PayerConfig(backend="test-mode"),
@@ -100,6 +104,20 @@ def _config(*, max_request_sats: int = 100) -> PaygateConfig:
             allowed_services=("orders",),
         ),
         protocol=ProtocolConfig(preferred="Payment"),
+    )
+
+
+def _l402_config(*, max_request_sats: int = 100) -> PaygateConfig:
+    return PaygateConfig(
+        payer=PayerConfig(backend="test-mode"),
+        policy=PolicyConfig(
+            max_request_sats=max_request_sats,
+            max_fee_sats=7,
+            daily_budget_sats=100,
+            allowed_hosts=("example.test:443",),
+            allowed_services=("orders",),
+        ),
+        protocol=ProtocolConfig(preferred="L402", allow_l402=True),
     )
 
 
@@ -252,6 +270,98 @@ def test_test_mode_preimage_from_mpp_opaque_skips_external_payer(tmp_path) -> No
     assert payer.calls == []
     assert authorizations[1] is not None
     assert authorizations[1].startswith("Payment ")
+
+
+def test_l402_request_retries_with_l402_authorization_and_commits(tmp_path) -> None:
+    payer = RecordingPayer()
+    authorizations: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        authorizations.append(request.headers.get("authorization"))
+        if len(authorizations) == 1:
+            return httpx.Response(
+                402,
+                headers={"WWW-Authenticate": _l402_header()},
+                json={"amountSats": 25, "test_preimage": PREIMAGE},
+            )
+        return httpx.Response(200, json={"paid": True})
+
+    engine = PolicyEngine(
+        _l402_config().policy,
+        ledger=DailySpendLedger(tmp_path / "ledger.json"),
+    )
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_l402_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=engine,
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["paid"] is True
+    assert envelope["protocol"] == "L402"
+    assert envelope["amountSats"] == 25
+    assert envelope["feeSats"] == 0
+    assert envelope["paymentHash"] == PAYMENT_HASH
+    assert payer.calls == []
+    assert authorizations == [None, f"L402 tok_123:{PREIMAGE}"]
+    assert engine.ledger.spent_today() == 25
+
+
+def test_l402_uses_invoice_amount_before_policy_check(tmp_path) -> None:
+    invoice_with_25_sats = "lnbc250n1l402qqqqqq"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("authorization") is None:
+            return httpx.Response(
+                402,
+                headers={"WWW-Authenticate": _l402_header(invoice_with_25_sats)},
+                json={"test_preimage": PREIMAGE},
+            )
+        return httpx.Response(200, json={"paid": True})
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_l402_config(max_request_sats=24),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=RecordingPayer(),
+        policy_engine=PolicyEngine(
+            _l402_config(max_request_sats=24).policy,
+            ledger=DailySpendLedger(tmp_path / "ledger.json"),
+        ),
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "policy_denied"
+    assert "25 sats exceeds" in envelope["error"]["message"]
+
+
+def test_l402_without_amount_is_rejected_before_payer(tmp_path) -> None:
+    payer = RecordingPayer()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            headers={"WWW-Authenticate": _l402_header()},
+            json={"test_preimage": PREIMAGE},
+        )
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_l402_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=PolicyEngine(
+            _l402_config().policy,
+            ledger=DailySpendLedger(tmp_path / "ledger.json"),
+        ),
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "unsupported_402_challenge"
+    assert "amount" in envelope["error"]["message"]
+    assert payer.calls == []
 
 
 def test_policy_denial_does_not_call_payer(tmp_path) -> None:

@@ -90,15 +90,13 @@ def _payment_challenge_payload(challenge: PaymentChallenge) -> dict[str, Any]:
         "description",
         "opaque",
     ):
-        value = getattr(challenge, key)
+        value = challenge.auth_params.get(key)
+        if value is None:
+            value = getattr(challenge, key)
         if value is not None:
             payload[key] = value
 
-    payload["request"] = (
-        dict(challenge.request_payload)
-        if challenge.request_payload
-        else challenge.request
-    )
+    payload["request"] = challenge.auth_params.get("request", challenge.request)
     return payload
 
 
