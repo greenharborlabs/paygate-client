@@ -237,8 +237,4 @@ def _optional_string(value: object) -> str | None:
 
 def _looks_like_tls_error(exc: BaseException) -> bool:
     message = str(exc).lower()
-    return (
-        "ssl" in message
-        or "certificate" in message
-        or "cert verify" in message
-    )
+    return "ssl" in message or "certificate" in message or "cert verify" in message

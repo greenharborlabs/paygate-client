@@ -103,7 +103,10 @@ def _payment_challenge_payload(challenge: PaymentChallenge) -> dict[str, Any]:
 
 
 def _normalize_preimage(preimage_hex: str) -> str:
-    if not isinstance(preimage_hex, str) or _PREIMAGE_HEX_RE.fullmatch(preimage_hex) is None:
+    if (
+        not isinstance(preimage_hex, str)
+        or _PREIMAGE_HEX_RE.fullmatch(preimage_hex) is None
+    ):
         raise InvalidPreimageError("preimage must be exactly 32 bytes of hex")
     return preimage_hex.lower()
 

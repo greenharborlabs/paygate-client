@@ -10,7 +10,6 @@ from paygate_client.challenges import L402Challenge, PaymentChallenge, parse_cha
 from paygate_client.config import ProtocolConfig
 from paygate_client.credentials import build_authorization
 
-
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "paygate"
 
 
@@ -76,7 +75,9 @@ def _parse_payment_fixture(name: str) -> tuple[PaymentChallenge, Mapping[str, An
     headers = _require_list(fixture, "www_authenticate", name)
     challenge = parse_challenges(headers, ProtocolConfig(preferred="Payment"), now=0)
     if not isinstance(challenge, PaymentChallenge):
-        raise AssertionError(f"{name}: expected Payment challenge, got {type(challenge).__name__}")
+        raise AssertionError(
+            f"{name}: expected Payment challenge, got {type(challenge).__name__}"
+        )
     return challenge, fixture
 
 
@@ -94,16 +95,28 @@ def _assert_payment_matches_fixture(
     assert challenge.intent == _require_string(expected, "intent", fixture_name)
     assert challenge.invoice == _require_string(expected, "invoice", fixture_name)
     assert challenge.amount_sats == _require_int(expected, "amount_sats", fixture_name)
-    assert challenge.payment_hash == _require_string(expected, "payment_hash", fixture_name)
+    assert challenge.payment_hash == _require_string(
+        expected, "payment_hash", fixture_name
+    )
     assert challenge.expires == _require_int(expected, "expires", fixture_name)
     assert challenge.digest == _require_string(expected, "digest", fixture_name)
-    assert challenge.description == _require_string(expected, "description", fixture_name)
+    assert challenge.description == _require_string(
+        expected, "description", fixture_name
+    )
     assert challenge.service == _require_string(expected, "service", fixture_name)
-    assert challenge.test_preimage == _require_string(expected, "test_preimage", fixture_name)
+    assert challenge.test_preimage == _require_string(
+        expected, "test_preimage", fixture_name
+    )
     assert challenge.request_payload == expected_request
     assert challenge.opaque_payload == expected_opaque
-    assert _decode_base64url_json(challenge.request, f"{fixture_name}.request") == expected_request
-    assert _decode_base64url_json(challenge.opaque or "", f"{fixture_name}.opaque") == expected_opaque
+    assert (
+        _decode_base64url_json(challenge.request, f"{fixture_name}.request")
+        == expected_request
+    )
+    assert (
+        _decode_base64url_json(challenge.opaque or "", f"{fixture_name}.opaque")
+        == expected_opaque
+    )
 
 
 def _assert_l402_matches_fixture(
@@ -115,7 +128,9 @@ def _assert_l402_matches_fixture(
     assert challenge.token == _require_string(expected, "token", fixture_name)
     assert challenge.macaroon == _require_string(expected, "macaroon", fixture_name)
     assert challenge.invoice == _require_string(expected, "invoice", fixture_name)
-    assert dict(challenge.auth_params) == _require_mapping(expected, "auth_params", fixture_name)
+    assert dict(challenge.auth_params) == _require_mapping(
+        expected, "auth_params", fixture_name
+    )
 
 
 def test_paygate_mpp_only_fixture_parses_real_wire_format() -> None:
@@ -138,8 +153,9 @@ def test_paygate_l402_only_fixture_parses_real_wire_format() -> None:
     )
 
     if not isinstance(challenge, L402Challenge):
+        actual = type(challenge).__name__
         raise AssertionError(
-            f"l402_challenge.json: expected L402 challenge, got {type(challenge).__name__}"
+            f"l402_challenge.json: expected L402 challenge, got {actual}"
         )
     _assert_l402_matches_fixture(
         challenge,
@@ -165,9 +181,11 @@ def test_paygate_dual_fixture_selects_preferred_protocol_without_lost_fields() -
     )
 
     if not isinstance(payment, PaymentChallenge):
-        raise AssertionError(f"dual_challenge.json: expected Payment preferred selection")
+        raise AssertionError(
+            "dual_challenge.json: expected Payment preferred selection"
+        )
     if not isinstance(l402, L402Challenge):
-        raise AssertionError(f"dual_challenge.json: expected L402 preferred selection")
+        raise AssertionError("dual_challenge.json: expected L402 preferred selection")
     _assert_payment_matches_fixture(
         payment,
         _require_mapping(expected, "payment", "dual_challenge.json"),
@@ -191,4 +209,6 @@ def test_paygate_mpp_credential_fixture_matches_builder_wire_format() -> None:
     decoded = _decode_base64url_json(blob, "mpp_credential.json.authorization")
 
     assert scheme == "Payment"
-    assert decoded == _require_mapping(fixture, "expected_decoded", "mpp_credential.json")
+    assert decoded == _require_mapping(
+        fixture, "expected_decoded", "mpp_credential.json"
+    )

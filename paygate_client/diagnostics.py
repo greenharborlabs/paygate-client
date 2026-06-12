@@ -47,9 +47,7 @@ def backend_doctor(
     try:
         config = load_config(config_path, env=env)
         payer = payer_factory(config)
-        supports_max_fee_limit = bool(
-            getattr(payer, "supports_max_fee_limit", False)
-        )
+        supports_max_fee_limit = bool(getattr(payer, "supports_max_fee_limit", False))
         if not supports_max_fee_limit:
             return _error(
                 "PAYER_BACKEND_UNSUPPORTED_FEE_LIMIT",

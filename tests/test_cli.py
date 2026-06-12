@@ -126,7 +126,9 @@ def test_request_command_rejects_malformed_header(tmp_path) -> None:
     assert json.loads(result.output)["error"]["code"] == "invalid_request"
 
 
-def test_request_command_without_config_flag_reaches_config_loading(monkeypatch) -> None:
+def test_request_command_without_config_flag_reaches_config_loading(
+    monkeypatch,
+) -> None:
     seen = {}
 
     def fake_load_config(config_path):
@@ -227,8 +229,7 @@ def test_backend_pay_invoice_command_exits_nonzero_for_missing_preimage(
 
     assert result.exit_code == 1
     assert (
-        json.loads(result.output)["error"]["code"]
-        == "PAYER_BACKEND_MISSING_PREIMAGE"
+        json.loads(result.output)["error"]["code"] == "PAYER_BACKEND_MISSING_PREIMAGE"
     )
 
 

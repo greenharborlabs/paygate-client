@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 
@@ -219,3 +220,13 @@ policy:
 
     assert config.protocol.preferred == "Payment"
     assert config.protocol.allow_l402 is False
+
+
+def test_documented_example_config_loads_without_real_lightning_secrets():
+    config = load_config(Path("examples/paygate-client.yaml"), env={})
+
+    assert config.payer.backend == "test-mode"
+    assert config.policy.allowed_hosts
+    assert config.policy.allowed_services
+    assert config.lnd is None
+    assert config.phoenixd is None

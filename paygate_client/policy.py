@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Literal, TypeVar
 from urllib.parse import urlsplit
 
 from paygate_client.config import PolicyConfig
@@ -214,7 +214,7 @@ class PolicyApproval:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         traceback: TracebackType | None,
-    ) -> bool:
+    ) -> Literal[False]:
         del exc_type, exc, traceback
         if self.reservation.is_pending:
             self.rollback()

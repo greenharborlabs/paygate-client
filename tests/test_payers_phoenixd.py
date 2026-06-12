@@ -111,7 +111,9 @@ def test_phoenixd_missing_preimage_marks_backend_unsupported() -> None:
         ).pay(_challenge(), max_fee_sats=3)
 
 
-def test_phoenixd_default_fee_limit_unsupported_refuses_before_posting_invoice() -> None:
+def test_phoenixd_default_fee_limit_unsupported_refuses_before_posting_invoice() -> (
+    None
+):
     submitted = False
 
     def handler(request: httpx.Request) -> httpx.Response:

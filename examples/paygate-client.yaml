@@ -1,0 +1,44 @@
+# Copy to ~/.config/paygate-client/config.yaml and start in test-mode.
+# test-mode never sends real Lightning payments; it only satisfies test
+# challenges that include a test preimage.
+payer:
+  backend: test-mode
+
+policy:
+  # Payment is denied unless host, service, amount, fee, and budget policy pass.
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+
+protocol:
+  preferred: Payment
+  allow_l402: true
+
+# First real-money backend: LND REST, including hosted LND providers such as
+# Voltage when they expose LND REST credentials.
+#
+# To use it, change payer.backend to lnd-rest and set:
+#   export PAYGATE_CLIENT_LND_REST_URL="https://127.0.0.1:8080"
+#   export PAYGATE_CLIENT_LND_MACAROON_HEX="$(xxd -p -c 256 ~/.lnd/data/chain/bitcoin/mainnet/admin.macaroon)"
+#   export PAYGATE_CLIENT_LND_TLS_CERT_PATH="$HOME/.lnd/tls.cert"
+#
+# lnd:
+#   rest_url_env: "PAYGATE_CLIENT_LND_REST_URL"
+#   macaroon_hex_env: "PAYGATE_CLIENT_LND_MACAROON_HEX"
+#   tls_cert_path_env: "PAYGATE_CLIENT_LND_TLS_CERT_PATH"
+
+# Phoenixd is a capability spike. Do not use it for automated real payments
+# until doctor and pay-invoice prove preimage return and fee-limit enforcement
+# for your exact Phoenixd API version.
+#
+# To spike it, change payer.backend to phoenixd and set:
+#   export PAYGATE_CLIENT_PHOENIXD_PASSWORD="replace-with-phoenixd-password"
+#
+# phoenixd:
+#   url: "http://127.0.0.1:9740"
+#   password_env: "PAYGATE_CLIENT_PHOENIXD_PASSWORD"
+#   fee_limit_parameter: "maxFeeSat"

@@ -16,7 +16,6 @@ from paygate_client.credentials import (
     build_authorization,
 )
 
-
 ZERO_PREIMAGE = "00" * 32
 
 
@@ -75,14 +74,18 @@ def test_build_l402_authorization_uses_token_and_lowercase_preimage() -> None:
 
 
 def test_build_l402_authorization_uses_macaroon_when_token_absent() -> None:
-    challenge = L402Challenge(token=None, macaroon="macaroon-value", invoice="lnbc1test")
+    challenge = L402Challenge(
+        token=None, macaroon="macaroon-value", invoice="lnbc1test"
+    )
 
     assert build_authorization(challenge, ZERO_PREIMAGE) == (
         f"L402 macaroon-value:{ZERO_PREIMAGE}"
     )
 
 
-@pytest.mark.parametrize("token", ["abc\rdef", "abc\ndef", "abc:def", "abc,def", "abc\x7fdef"])
+@pytest.mark.parametrize(
+    "token", ["abc\rdef", "abc\ndef", "abc:def", "abc,def", "abc\x7fdef"]
+)
 def test_build_l402_authorization_rejects_header_unsafe_tokens(token: str) -> None:
     challenge = L402Challenge(token=token, macaroon=None, invoice="lnbc1test")
 
