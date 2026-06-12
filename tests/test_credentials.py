@@ -117,25 +117,18 @@ def test_build_payment_authorization_emits_decodable_mpp_credential() -> None:
         "challenge": {
             "description": "fixture payment",
             "digest": "sha-256=:abc:",
-            "expires": 1_725_000_000,
+            "expires": "1725000000",
             "id": "challenge-123",
             "intent": "download",
             "method": "mpp",
             "opaque": "opaque-token",
             "realm": "paygate",
-            "request": {
-                "amount": 123,
-                "method": "bolt11",
-                "methodDetails": {
-                    "invoice": "lnbc1test",
-                    "paymentHash": "ab" * 32,
-                },
-            },
+            "request": "request-payload-token",
         },
         "payload": {"preimage": ZERO_PREIMAGE},
         "source": "unit-test",
     }
-    assert decoded["challenge"]["request"]["methodDetails"]["paymentHash"] == "ab" * 32
+    assert decoded["challenge"]["request"] == "request-payload-token"
 
 
 def test_build_payment_authorization_is_deterministic() -> None:

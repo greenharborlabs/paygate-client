@@ -99,6 +99,37 @@ def test_payment_request_payload_exposes_payment_hash_for_credentials() -> None:
     assert challenge.request_payload["methodDetails"] == {"paymentHash": payment_hash}
 
 
+def test_payment_request_accepts_reference_app_payload_shape() -> None:
+    request = _b64url_json(
+        {
+            "amount": "10",
+            "currency": "BTC",
+            "methodDetails": {
+                "invoice": "lntb10test",
+                "network": "mainnet",
+                "paymentHash": "ab" * 32,
+            },
+        }
+    )
+
+    challenge = parse_challenges(
+        [
+            _payment_header(
+                request,
+                expires="2026-06-12T03:37:12.085906Z",
+            )
+        ],
+        ProtocolConfig(preferred="Payment"),
+        now=1_700_000_000,
+    )
+
+    assert isinstance(challenge, PaymentChallenge)
+    assert challenge.invoice == "lntb10test"
+    assert challenge.amount_sats == 10
+    assert challenge.payment_hash == "ab" * 32
+    assert challenge.service == "orders"
+
+
 def test_l402_only_with_l402_disabled_raises_protocol_disabled() -> None:
     with pytest.raises(ProtocolDisabledError):
         parse_challenges(
@@ -122,6 +153,21 @@ def test_l402_preferred_when_allowed() -> None:
     assert challenge.credential_token == "tok_123"
     assert challenge.invoice == "lnbc1l402"
     assert challenge.version == "1"
+
+
+def test_l402_preferred_ignores_malformed_payment_fallback() -> None:
+    malformed_payment = _payment_header(_b64url_json({"amount": "10"}))
+
+    challenge = parse_challenges(
+        [
+            'L402 token="tok_123", macaroon="tok_123", invoice="lnbc1l402", version=1',
+            malformed_payment,
+        ],
+        ProtocolConfig(preferred="L402", allow_l402=True),
+    )
+
+    assert isinstance(challenge, L402Challenge)
+    assert challenge.invoice == "lnbc1l402"
 
 
 def test_l402_keeps_different_token_and_macaroon_values_distinct() -> None:

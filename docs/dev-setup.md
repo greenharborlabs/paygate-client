@@ -14,8 +14,11 @@ python3 -m pip install -e ".[dev]"
 ## Verification commands
 
 ```bash
-python3 -m pytest
-python3 -m ruff check .
-python3 -m ruff format --check .
-python3 -m mypy
+poe check
+```
+
+Run auto-formatting and safe Ruff fixes before committing:
+
+```bash
+poe fix
 ```

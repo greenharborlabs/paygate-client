@@ -15,7 +15,7 @@ policy:
     - paygate-reference-service
 
 protocol:
-  preferred: Payment
+  preferred: L402
   allow_l402: true
 
 # First real-money backend: LND REST, including hosted LND providers such as

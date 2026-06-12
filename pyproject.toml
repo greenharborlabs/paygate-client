@@ -33,11 +33,13 @@ include = ["paygate_client*"]
 testpaths = ["tests"]
 
 [tool.poe.tasks]
-test = "pytest"
 format = "ruff format ."
 format-check = "ruff format --check ."
 lint = "ruff check ."
+test = "pytest"
 typecheck = "mypy"
+fix = { shell = "ruff check . --fix && ruff format ." }
+check = { shell = "ruff format --check . && ruff check . && mypy && pytest" }
 
 [tool.ruff]
 line-length = 88

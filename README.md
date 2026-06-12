@@ -283,9 +283,10 @@ L402 retry credential:
 Authorization: L402 <token-or-macaroon>:<64 lowercase hex preimage>
 ```
 
-L402 must be enabled with `protocol.allow_l402: true`. Current request
-orchestration returns `unsupported_402_challenge` for L402 payment challenges
-because the implemented payment flow depends on MPP metadata.
+L402 must be enabled with `protocol.allow_l402: true`. For policy enforcement,
+the client derives the payment hash and amount from the BOLT11 invoice. Local
+test fixtures may provide `test_preimage` and `amountSats` in the 402 JSON body
+when using `test-mode`.
 
 ## Troubleshooting
 
@@ -307,9 +308,9 @@ cap, or daily budget.
 `PAYGATE_CLIENT_LND_TLS_CERT_PATH`, or
 `PAYGATE_CLIENT_PHOENIXD_PASSWORD`.
 
-`unsupported_402_challenge`: the response did not include a supported `Payment`
-challenge, the challenge was malformed or expired, or only L402 was available
-while L402 is disabled or not supported by the request orchestrator.
+`unsupported_402_challenge`: the response did not include a supported challenge,
+the challenge was malformed or expired, L402 was disabled, or L402 invoice
+metadata was insufficient to enforce policy before payment.
 
 ## Development
 
