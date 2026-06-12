@@ -23,6 +23,7 @@ def test_pyproject_declares_tooling_commands() -> None:
     assert pyproject["tool"]["poe"]["tasks"] == {
         "test": "pytest",
         "format": "ruff format .",
+        "format-check": "ruff format --check .",
         "lint": "ruff check .",
         "typecheck": "mypy",
     }

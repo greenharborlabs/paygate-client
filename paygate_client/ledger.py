@@ -53,11 +53,7 @@ def default_ledger_path() -> Path:
     if state_home:
         return Path(state_home) / "paygate-client" / "daily-spend-ledger.json"
     return (
-        Path.home()
-        / ".local"
-        / "state"
-        / "paygate-client"
-        / "daily-spend-ledger.json"
+        Path.home() / ".local" / "state" / "paygate-client" / "daily-spend-ledger.json"
     )
 
 

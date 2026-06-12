@@ -169,7 +169,9 @@ def test_execute_rolls_back_on_generic_payer_failure(engine) -> None:
     assert approval.reservation.is_rolled_back
 
 
-def test_context_manager_rolls_back_on_credential_failure_before_payment(engine) -> None:
+def test_context_manager_rolls_back_on_credential_failure_before_payment(
+    engine,
+) -> None:
     with pytest.raises(CredentialFailure):
         with engine.evaluate(request(amount_sats=20)) as approval:
             assert approval.reservation.is_pending
@@ -179,7 +181,9 @@ def test_context_manager_rolls_back_on_credential_failure_before_payment(engine)
     assert approval.reservation.is_rolled_back
 
 
-def test_manual_reservation_rolls_back_on_retry_exhaustion_before_payment(engine) -> None:
+def test_manual_reservation_rolls_back_on_retry_exhaustion_before_payment(
+    engine,
+) -> None:
     approval = engine.evaluate(request(amount_sats=20))
 
     with pytest.raises(RetryExhausted):
@@ -298,7 +302,9 @@ def test_rollback_failure_maps_to_policy_rollback_error() -> None:
         approval.rollback()
 
 
-def test_reservation_state_error_during_rollback_maps_to_policy_rollback_error() -> None:
+def test_reservation_state_error_during_rollback_maps_to_policy_rollback_error() -> (
+    None
+):
     approval = PolicyApproval(
         max_fee_sats=10,
         reservation=StateErrorRollbackReservation(),

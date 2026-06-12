@@ -420,7 +420,8 @@ def _amount_sats_field(source: Mapping[str, Any]) -> int:
             raise MalformedMPPRequestError(
                 f"Payment request payload {key} must be non-negative"
             )
-        return value
+        amount_sats: int = value
+        return amount_sats
     raise MissingAmountError("Payment request payload is missing amountSats")
 
 

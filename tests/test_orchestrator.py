@@ -10,11 +10,11 @@ import httpx
 from paygate_client.config import (
     EnvRef,
     LndConfig,
-    PaygateConfig,
     PayerConfig,
+    PaygateConfig,
+    PhoenixdConfig,
     PolicyConfig,
     ProtocolConfig,
-    PhoenixdConfig,
     SecretRef,
 )
 from paygate_client.credentials import CredentialError
@@ -28,7 +28,6 @@ from paygate_client.payers import AbstractPayer, RawPaymentResult, TestModePayer
 from paygate_client.payers.lnd_rest import LndRestPayer
 from paygate_client.payers.phoenixd import PhoenixdPayer
 from paygate_client.policy import PolicyEngine
-
 
 PREIMAGE = "11" * 32
 PAYMENT_HASH = sha256(bytes.fromhex(PREIMAGE)).hexdigest()

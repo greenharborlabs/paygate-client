@@ -1,5 +1,20 @@
 # Phoenixd payer backend spike
 
+Phoenixd is a Paygate payer capability spike until both diagnostic commands
+prove the target Phoenixd API returns payment preimages and enforces a
+per-payment fee limit before payment:
+
+```bash
+paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
+paygate backend pay-invoice <bolt11> \
+  --config ~/.config/paygate-client/config.yaml \
+  --max-fee-sats 5 \
+  --json
+```
+
+Do not use Phoenixd for automated real-money Paygate payer traffic until those
+checks pass against your exact Phoenixd build.
+
 Paygate's Phoenixd payer uses Phoenixd's HTTP `POST /payinvoice` endpoint with
 HTTP Basic auth. Phoenixd validates the password from `phoenixd.password_env`;
 the backend uses the same username convention as `phoenix-cli` and never sends
@@ -37,11 +52,11 @@ Use a low-value invoice whose payment hash is known from Paygate's selected
 challenge:
 
 1. Run `paygate backend doctor` with the Phoenixd config to verify the backend is
-   reachable and authenticated.
-2. Run `paygate backend pay-invoice <invoice> --max-fee-sats <small cap>` against
-   a small invoice.
-3. Confirm the command prints a preimage and that the preimage hash matches the
-   challenge `payment_hash`.
+   reachable, authenticated, and reports fee-limit capability.
+2. Run `paygate backend pay-invoice <invoice> --config <config path>
+   --max-fee-sats <small cap> --json` against a small invoice.
+3. Confirm the command returns `ok: true`, `preimageVerified: true`, and payment
+   metadata with the preimage redacted.
 4. If payment succeeds but no preimage is returned, mark that Phoenixd API as
    unsupported for Paygate V1.
 

@@ -152,7 +152,9 @@ class RawResultPayer:
     def __init__(self, result: RawPaymentResult) -> None:
         self.result = result
 
-    def pay(self, challenge: PaymentChallenge, *, max_fee_sats: int) -> RawPaymentResult:
+    def pay(
+        self, challenge: PaymentChallenge, *, max_fee_sats: int
+    ) -> RawPaymentResult:
         return self.result
 
 

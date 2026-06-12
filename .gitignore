@@ -15,6 +15,7 @@ paygate-client.*
 !paygate-client.example.yaml
 !paygate-client.sample.yml
 !paygate-client.sample.yaml
+!examples/paygate-client.yaml
 paygate.local.*
 paygate-client.local.*
 
