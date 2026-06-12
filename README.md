@@ -85,6 +85,84 @@ The command prints a JSON envelope. Successful unpaid responses include
 `amountSats`, `feeSats`, and `paymentHash` metadata. Failures include
 `ok: false`, `paid`, and `error.code` plus `error.message`.
 
+## Local Dev Payment Recipes
+
+These recipes use `test-mode`, which does not make real Lightning payments. The
+local reference service must run in dev mode and include a `test_preimage` in
+local/test 402 responses. The preimage is a 32-byte Lightning payment preimage
+encoded as 64 lowercase hex characters, and its SHA-256 hash must match the
+challenge invoice's payment hash.
+
+### L402 With Test Preimage
+
+Use the default example config when it prefers L402:
+
+```yaml
+protocol:
+  preferred: L402
+  allow_l402: true
+```
+
+Run the local request:
+
+```bash
+paygate request GET \
+  "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
+  --config examples/paygate-client.yaml
+```
+
+Expected success shape:
+
+```json
+{
+  "ok": true,
+  "paid": true,
+  "protocol": "L402",
+  "payerBackend": "test-mode"
+}
+```
+
+The retry sends:
+
+```http
+Authorization: L402 <token-or-macaroon>:<64 lowercase hex preimage>
+```
+
+### MPP Payment With Test Preimage
+
+Create a temporary Payment-preferred config:
+
+```bash
+cp examples/paygate-client.yaml /tmp/paygate-client-payment.yaml
+perl -0pi -e 's/preferred: L402/preferred: Payment/' \
+  /tmp/paygate-client-payment.yaml
+```
+
+Run the same local request:
+
+```bash
+paygate request GET \
+  "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
+  --config /tmp/paygate-client-payment.yaml
+```
+
+Expected success shape:
+
+```json
+{
+  "ok": true,
+  "paid": true,
+  "protocol": "Payment",
+  "payerBackend": "test-mode"
+}
+```
+
+The retry sends:
+
+```http
+Authorization: Payment <base64url-json>
+```
+
 ## Backend Diagnostics
 
 Run diagnostics before enabling real payments. The diagnostic commands are
