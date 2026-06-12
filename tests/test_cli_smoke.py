@@ -29,9 +29,11 @@ def test_pyproject_declares_tooling_commands() -> None:
     pyproject = tomllib.loads(Path("pyproject.toml").read_text())
 
     assert pyproject["tool"]["poe"]["tasks"] == {
-        "test": "pytest",
         "format": "ruff format .",
         "format-check": "ruff format --check .",
         "lint": "ruff check .",
+        "test": "pytest",
         "typecheck": "mypy",
+        "fix": {"shell": "ruff check . --fix && ruff format ."},
+        "check": {"shell": "ruff format --check . && ruff check . && mypy && pytest"},
     }

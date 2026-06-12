@@ -156,6 +156,7 @@ def _pay_and_verify(
         return verify_payment_result(challenge, result)
     raise ValueError("payer backend returned an unsupported payment result")
 
+
 def _classify_backend_unavailable(exc: BackendUnavailableError) -> str:
     name = type(exc).__name__.lower()
     message = str(exc).lower()
