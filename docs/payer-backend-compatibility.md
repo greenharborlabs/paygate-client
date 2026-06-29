@@ -33,6 +33,62 @@ Real payment requires explicit local policy:
 
 Empty allowlists fail closed. Do not use wildcard host or service values.
 
+## Credential reuse and cache safety
+
+`paygate request` is a payment/session credential manager, not a blind
+pay-every-request wrapper. The client checks for a valid cached credential
+before entering a new `402` payment flow. If a cached credential succeeds, the
+request returns with `paid: false` and `credentialCache.hit: true`.
+
+Cached credentials are scoped and must not be reused across:
+
+- CLI profile or agent namespace
+- target `host:port`
+- Paygate service
+- protocol, `Payment` or `L402`
+- payer backend
+- local policy context
+- request key
+
+If a cached credential is expired, over its configured use count, or rejected
+with `401` or `402`, the client discards it and re-enters the normal challenge
+flow. Use `--refresh-credential` to force a new payment flow, `--no-cache` to
+bypass cache reads and writes, and `paygate credentials purge` to remove cached
+credentials.
+
+Credential secrets are bearer-style payment material. `paygate credentials list`
+and `show` redact them. The metadata file is stored at
+`~/.config/paygate-client/credentials.json` with `0600` permissions for the
+default profile. Non-default profiles store metadata under
+`~/.config/paygate-client/profiles/<profile>/credentials.json`. When the Python
+`keyring` backend is available, the authorization value is stored in the OS
+keyring instead of the metadata file, and the keyring account is scoped by
+profile.
+
+Use `--profile` whenever multiple agents share the same Unix user, home
+directory, or container image:
+
+```bash
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/worker-a.yaml \
+  --profile worker-a
+
+paygate credentials list --profile worker-a
+paygate credentials purge --all --profile worker-a
+```
+
+Profiles also isolate daily spend ledgers. The default ledger remains
+`~/.local/state/paygate-client/daily-spend-ledger.json`, while profile ledgers
+use
+`~/.local/state/paygate-client/profiles/<profile>/daily-spend-ledger.json`.
+Set `--cache-path` or `--ledger-path` when an orchestrator wants to mount
+profile state somewhere else.
+
+For manager/subagent workflows, give the manager profile the broad payer
+credentials and give each subagent a separate profile with a narrower config,
+restricted LND macaroon, or no payer credentials. Never let subagents share the
+manager profile unless they should inherit the same payment authority.
+
 ## Diagnostic commands
 
 ```bash

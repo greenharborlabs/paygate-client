@@ -22,6 +22,17 @@ python3 -m pip install -e ".[dev]"
 paygate --help
 ```
 
+For guided Voltage/LND setup, run:
+
+```bash
+scripts/setup-voltage-paygate.sh
+```
+
+The wizard prompts for the Voltage REST URL, macaroon hex, optional TLS cert
+path, allowlist entries, and spend caps. It writes the Paygate config to
+`~/.config/paygate-client/config.yaml` and stores secrets only in
+`~/.config/paygate-client/voltage-env.sh`.
+
 ## First Local Config
 
 Start with `test-mode`. It never sends real Lightning payments and can satisfy
@@ -85,6 +96,156 @@ The command prints a JSON envelope. Successful unpaid responses include
 `amountSats`, `feeSats`, and `paymentHash` metadata. Failures include
 `ok: false`, `paid`, and `error.code` plus `error.message`.
 
+By default, `paygate request` acts as a payment/session credential manager:
+
+1. It checks for a valid cached credential scoped to the request.
+2. If one works, it sends the request without paying again and returns
+   `credentialCache.hit: true`.
+3. If no reusable credential works and the server returns `402`, it enforces
+   local policy, pays, builds the retry credential, caches it when the challenge
+   has a safe reuse window, and retries.
+
+Cached credentials are bearer-style payment credentials. Treat them like
+secrets. The metadata file is `~/.config/paygate-client/credentials.json` with
+`0600` permissions. When the optional keyring backend is available, the
+credential secret is stored in the OS keyring and only metadata is written to
+the file.
+
+For shared machines or multi-agent environments, use `--profile` to isolate
+each agent's cached credentials, keyring entries, and daily spend ledger. The
+default profile preserves the legacy paths:
+
+- default credential cache:
+  `~/.config/paygate-client/credentials.json`
+- profile credential cache:
+  `~/.config/paygate-client/profiles/<profile>/credentials.json`
+- default spend ledger:
+  `~/.local/state/paygate-client/daily-spend-ledger.json`
+- profile spend ledger:
+  `~/.local/state/paygate-client/profiles/<profile>/daily-spend-ledger.json`
+
+Profiles are intended for manager/subagent setups. A manager agent can use a
+profile with payer credentials and a larger policy budget. Subagents should use
+separate profiles with narrower config policy, restricted backend macaroons, or
+no payer credentials at all. Do not share the manager profile with subagents.
+
+Useful request flags:
+
+```bash
+# Inspect the 402 challenge and local policy result without paying.
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/config.yaml \
+  --no-pay --trace-json
+
+# Show a human-readable step trail on stderr.
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/config.yaml \
+  --verbose
+
+# Bypass cache and force a fresh payment flow.
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/config.yaml \
+  --refresh-credential
+
+# Disable credential cache reads and writes for one request.
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/config.yaml \
+  --no-cache
+
+# Run as a specific agent profile with isolated cache and budget ledger.
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/config.yaml \
+  --profile worker-a
+
+# Override cache and ledger locations for containerized agents.
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/config.yaml \
+  --profile worker-a \
+  --cache-path /tmp/paygate-worker-a/credentials.json \
+  --ledger-path /tmp/paygate-worker-a/daily-spend-ledger.json
+```
+
+Credential cache commands:
+
+```bash
+paygate credentials list
+paygate credentials show <credential-id>
+paygate credentials purge --host localhost:8080 --service paygate-reference-service
+paygate credentials purge --all
+
+# Inspect or purge a specific agent profile.
+paygate credentials list --profile worker-a
+paygate credentials show <credential-id> --profile worker-a
+paygate credentials purge --all --profile worker-a
+```
+
+`list` and `show` redact credential secrets by default.
+
+### Multi-Agent Client Example
+
+Use separate configs when agents have different authority. This example gives
+the manager a broader LND macaroon and the worker a restricted macaroon and
+smaller policy budget:
+
+```yaml
+# ~/.config/paygate-client/manager.yaml
+payer:
+  backend: lnd-rest
+policy:
+  max_request_sats: 100
+  max_fee_sats: 10
+  daily_budget_sats: 1000
+  allowed_hosts:
+    - api.example.com:443
+  allowed_services:
+    - paygate-reference-service
+protocol:
+  preferred: Payment
+  allow_l402: true
+lnd:
+  rest_url_env: "PAYGATE_CLIENT_LND_REST_URL"
+  macaroon_hex_env: "PAYGATE_CLIENT_MANAGER_MACAROON_HEX"
+```
+
+```yaml
+# ~/.config/paygate-client/worker-a.yaml
+payer:
+  backend: lnd-rest
+policy:
+  max_request_sats: 10
+  max_fee_sats: 2
+  daily_budget_sats: 50
+  allowed_hosts:
+    - api.example.com:443
+  allowed_services:
+    - paygate-reference-service
+protocol:
+  preferred: Payment
+  allow_l402: true
+lnd:
+  rest_url_env: "PAYGATE_CLIENT_LND_REST_URL"
+  macaroon_hex_env: "PAYGATE_CLIENT_WORKER_A_MACAROON_HEX"
+```
+
+```bash
+export PAYGATE_CLIENT_LND_REST_URL="https://127.0.0.1:8080"
+export PAYGATE_CLIENT_MANAGER_MACAROON_HEX="<manager-macaroon-hex>"
+export PAYGATE_CLIENT_WORKER_A_MACAROON_HEX="<restricted-worker-macaroon-hex>"
+
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/manager.yaml \
+  --profile manager
+
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/worker-a.yaml \
+  --profile worker-a
+```
+
+The two requests use separate credential caches, keyring accounts, and daily
+budget ledgers. If the manager pays for reusable credentials, do not copy the
+manager cache to workers unless the credential is intentionally delegated and
+safe for that worker's host, service, and use window.
+
 ## Local Dev Payment Recipes
 
 These recipes use `test-mode`, which does not make real Lightning payments. The
@@ -108,7 +269,17 @@ Run the local request:
 ```bash
 paygate request GET \
   "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
-  --config examples/paygate-client.yaml
+  --config examples/paygate-client.yaml \
+  --no-pay --trace-json
+```
+
+Then run the local paid retry path:
+
+```bash
+paygate request GET \
+  "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
+  --config examples/paygate-client.yaml \
+  --verbose
 ```
 
 Expected success shape:
@@ -143,7 +314,8 @@ Run the same local request:
 ```bash
 paygate request GET \
   "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
-  --config /tmp/paygate-client-payment.yaml
+  --config /tmp/paygate-client-payment.yaml \
+  --verbose
 ```
 
 Expected success shape:
@@ -384,7 +556,18 @@ cap, or daily budget.
 `PAYGATE_CLIENT_LND_MACAROON_HEX`,
 `PAYGATE_CLIENT_LND_REST_URL`,
 `PAYGATE_CLIENT_LND_TLS_CERT_PATH`, or
-`PAYGATE_CLIENT_PHOENIXD_PASSWORD`.
+`PAYGATE_CLIENT_PHOENIXD_PASSWORD`. If you used
+`scripts/setup-voltage-paygate.sh`, make sure
+`~/.config/paygate-client/voltage-env.sh` exists next to
+`~/.config/paygate-client/config.yaml`; the CLI loads that companion file
+automatically.
+
+`credentialCache.hit: true`: the request succeeded with a cached payment
+credential and did not pay a new invoice.
+
+`cached_credential_rejected`: the server rejected a cached credential with a
+non-`401`/`402` status. Purge the credential with `paygate credentials purge`
+and retry.
 
 `unsupported_402_challenge`: the response did not include a supported challenge,
 the challenge was malformed or expired, L402 was disabled, or L402 invoice
@@ -396,6 +579,7 @@ metadata was insufficient to enforce policy before payment.
 python3 -m pytest tests/test_config.py
 paygate --help
 paygate request --help
+paygate credentials --help
 paygate backend --help
 paygate backend doctor --help
 paygate backend pay-invoice --help

@@ -11,6 +11,7 @@ from paygate_client.config import (
     MissingSecretError,
     PaygateConfig,
     load_config,
+    load_config_env,
 )
 from paygate_client.invoices import payment_hash_from_invoice
 from paygate_client.orchestrator import payer_from_config
@@ -44,8 +45,13 @@ def backend_doctor(
     """Validate configured payer backend compatibility."""
 
     try:
-        config = load_config(config_path, env=env)
-        payer = payer_factory(config)
+        loaded_env = load_config_env(config_path, env=env)
+        config = load_config(config_path, env=loaded_env)
+        payer = (
+            payer_from_config(config, env=loaded_env)
+            if payer_factory is payer_from_config
+            else payer_factory(config)
+        )
         supports_max_fee_limit = bool(getattr(payer, "supports_max_fee_limit", False))
         if not supports_max_fee_limit:
             return _error(
@@ -84,8 +90,13 @@ def backend_pay_invoice(
     """Pay a standalone BOLT11 invoice through the configured payer backend."""
 
     try:
-        config = load_config(config_path, env=env)
-        payer = payer_factory(config)
+        loaded_env = load_config_env(config_path, env=env)
+        config = load_config(config_path, env=loaded_env)
+        payer = (
+            payer_from_config(config, env=loaded_env)
+            if payer_factory is payer_from_config
+            else payer_factory(config)
+        )
         invoice_payment_hash = payment_hash_from_invoice(bolt11)
         challenge = PaymentChallenge(
             invoice=bolt11,

@@ -230,3 +230,38 @@ def test_documented_example_config_loads_without_real_lightning_secrets():
     assert config.policy.allowed_services
     assert config.lnd is None
     assert config.phoenixd is None
+
+
+def test_lnd_config_loads_script_generated_companion_env_file(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+payer:
+  backend: lnd-rest
+policy:
+  max_request_sats: 10
+  max_fee_sats: 2
+  daily_budget_sats: 100
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+lnd:
+  rest_url_env: "PAYGATE_CLIENT_LND_REST_URL"
+  macaroon_hex_env: "PAYGATE_CLIENT_LND_MACAROON_HEX"
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "voltage-env.sh").write_text(
+        """
+export PAYGATE_CLIENT_LND_REST_URL="https://node.m.voltageapp.io:8080"
+export PAYGATE_CLIENT_LND_MACAROON_HEX="00aa"
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path, env={})
+
+    assert config.lnd is not None
+    assert config.lnd.rest_url_env.env_var == "PAYGATE_CLIENT_LND_REST_URL"
+    assert config.lnd.macaroon_hex_env.env_var == "PAYGATE_CLIENT_LND_MACAROON_HEX"
