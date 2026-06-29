@@ -266,6 +266,24 @@ def test_backend_doctor_missing_env_secret_is_distinct_failure(tmp_path) -> None
     assert envelope["error"]["code"] == "PAYGATE_SECRET_MISSING"
 
 
+def test_backend_doctor_loads_script_generated_companion_env_file(tmp_path) -> None:
+    config_path = _lnd_config_file(tmp_path)
+    (tmp_path / "voltage-env.sh").write_text(
+        "\n".join(
+            [
+                'export LND_REST_URL="https://node.m.voltageapp.io:8080"',
+                'export LND_MACAROON_HEX="00aa"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    envelope = backend_doctor(config_path, env={})
+
+    assert envelope["ok"] is True
+    assert envelope["backend"] == "lnd-rest"
+
+
 @pytest.mark.parametrize(
     ("exc", "expected_code"),
     [

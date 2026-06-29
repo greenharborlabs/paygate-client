@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -137,7 +138,44 @@ def load_config(
             f"Invalid YAML in {config_path}: expected a mapping at the document root."
         )
 
-    return _load_mapping(raw, env=os.environ if env is None else env)
+    loaded_env = load_config_env(config_path, env=env)
+    return _load_mapping(raw, env=loaded_env)
+
+
+def load_config_env(
+    path: str | os.PathLike[str], env: Mapping[str, str] | None = None
+) -> Mapping[str, str]:
+    config_path = Path(path)
+    base_env = os.environ if env is None else env
+    env_path = config_path.parent / "voltage-env.sh"
+    if not env_path.exists():
+        return base_env
+
+    loaded = dict(_parse_export_env_file(env_path))
+    if not loaded:
+        return base_env
+    loaded.update(base_env)
+    return loaded
+
+
+def _parse_export_env_file(path: Path) -> Mapping[str, str]:
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+
+    for line in lines:
+        try:
+            parts = shlex.split(line, comments=True, posix=True)
+        except ValueError:
+            continue
+        if len(parts) != 2 or parts[0] != "export":
+            continue
+        name, separator, value = parts[1].partition("=")
+        if separator and name.isidentifier():
+            values[name] = value
+    return values
 
 
 def _load_mapping(raw: Mapping[str, object], env: Mapping[str, str]) -> PaygateConfig:

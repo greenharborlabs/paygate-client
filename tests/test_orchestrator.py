@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from hashlib import sha256
 from typing import Any
 
@@ -28,6 +29,13 @@ from paygate_client.payers import AbstractPayer, RawPaymentResult, TestModePayer
 from paygate_client.payers.lnd_rest import LndRestPayer
 from paygate_client.payers.phoenixd import PhoenixdPayer
 from paygate_client.policy import PolicyEngine
+from paygate_client.session_cache import (
+    CachedCredential,
+    CredentialScope,
+    MemoryCredentialCache,
+    build_policy_hash,
+    build_request_key,
+)
 
 PREIMAGE = "11" * 32
 PAYMENT_HASH = sha256(bytes.fromhex(PREIMAGE)).hexdigest()
@@ -64,6 +72,7 @@ def _payment_header(
     *,
     amount_sats: int = 25,
     payment_hash: str = PAYMENT_HASH,
+    service: str = "orders",
     test_preimage: str | None = None,
     receipt: str | None = None,
 ) -> str:
@@ -72,7 +81,7 @@ def _payment_header(
             "invoice": "lnbc1test",
             "amountSats": amount_sats,
             "methodDetails": {"paymentHash": payment_hash},
-            "service": "orders",
+            "service": service,
         }
     )
     opaque = ""
@@ -272,6 +281,61 @@ def test_test_mode_preimage_from_mpp_opaque_skips_external_payer(tmp_path) -> No
     assert authorizations[1].startswith("Payment ")
 
 
+def test_missing_test_preimage_invokes_configured_real_payer(tmp_path) -> None:
+    payer = RecordingPayer()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("authorization") is None:
+            return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+        return httpx.Response(200, json={"paid": True})
+
+    config = PaygateConfig(
+        payer=PayerConfig(backend="lnd-rest"),
+        policy=_base_policy(),
+        protocol=ProtocolConfig(preferred="Payment"),
+        lnd=LndConfig(
+            rest_url_env=EnvRef("LND_REST_URL"),
+            macaroon_hex_env=SecretRef("LND_MACAROON_HEX"),
+        ),
+    )
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=config,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=PolicyEngine(
+            config.policy,
+            ledger=DailySpendLedger(tmp_path / "ledger.json"),
+        ),
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["paid"] is True
+    assert envelope["payerBackend"] == "lnd-rest"
+    assert payer.calls == [7]
+
+
+def test_missing_test_preimage_with_test_mode_fails_before_retry(tmp_path) -> None:
+    request_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal request_count
+        request_count += 1
+        return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        policy_engine=_engine(tmp_path),
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "missing_preimage"
+    assert request_count == 1
+
+
 def test_l402_request_retries_with_l402_authorization_and_commits(tmp_path) -> None:
     payer = RecordingPayer()
     authorizations: list[str | None] = []
@@ -376,6 +440,82 @@ def test_policy_denial_does_not_call_payer(tmp_path) -> None:
         client=httpx.Client(transport=httpx.MockTransport(handler)),
         payer=payer,
         policy_engine=_engine(tmp_path, max_request_sats=1),
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "policy_denied"
+    assert payer.calls == []
+
+
+def test_host_denial_does_not_call_payer(tmp_path) -> None:
+    payer = RecordingPayer()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://blocked.test/resource"),
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=_engine(tmp_path),
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "policy_denied"
+    assert "host" in envelope["error"]["message"]
+    assert payer.calls == []
+
+
+def test_service_denial_does_not_call_payer(tmp_path) -> None:
+    payer = RecordingPayer()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            402,
+            headers={"WWW-Authenticate": _payment_header(service="billing")},
+        )
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=_engine(tmp_path),
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "policy_denied"
+    assert "service" in envelope["error"]["message"]
+    assert payer.calls == []
+
+
+def test_daily_budget_denial_does_not_call_payer(tmp_path) -> None:
+    payer = RecordingPayer()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+
+    config = PaygateConfig(
+        payer=PayerConfig(backend="test-mode"),
+        policy=PolicyConfig(
+            max_request_sats=100,
+            max_fee_sats=7,
+            daily_budget_sats=24,
+            allowed_hosts=("example.test:443",),
+            allowed_services=("orders",),
+        ),
+        protocol=ProtocolConfig(preferred="Payment"),
+    )
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=config,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=PolicyEngine(
+            config.policy,
+            ledger=DailySpendLedger(tmp_path / "ledger.json"),
+        ),
     )
 
     assert envelope["ok"] is False
@@ -523,3 +663,221 @@ def test_success_paid_redacts_untrusted_receipt(tmp_path) -> None:
     assert envelope["ok"] is True
     assert PREIMAGE not in json.dumps(envelope)
     assert envelope["receipt"] == "receipt:[REDACTED_PREIMAGE]"
+
+
+def test_no_pay_returns_challenge_without_invoking_payer(tmp_path) -> None:
+    payer = RecordingPayer()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=_engine(tmp_path),
+        no_pay=True,
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["paid"] is False
+    assert envelope["wouldPay"] is True
+    assert envelope["amountSats"] == 25
+    assert envelope["service"] == "orders"
+    assert payer.calls == []
+
+
+def test_cached_credential_is_used_before_payment(tmp_path) -> None:
+    payer = RecordingPayer()
+    request = PaygateRequest("GET", "https://example.test/resource")
+    authorization = "Payment cached"
+    scope = CredentialScope(
+        request_key=build_request_key(request.method, request.url, request.body),
+        origin_host="example.test:443",
+        service="orders",
+        protocol="Payment",
+        payer_backend="test-mode",
+        policy_hash=build_policy_hash(_config().policy),
+    )
+    cache = MemoryCredentialCache(
+        [
+            CachedCredential(
+                credential_id="cred_123",
+                scope=scope,
+                authorization=authorization,
+                created_at=int(time.time()),
+                expires_at=4102444800,
+            )
+        ]
+    )
+    authorizations: list[str | None] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        authorizations.append(http_request.headers.get("authorization"))
+        return httpx.Response(200, json={"cached": True})
+
+    envelope = request_with_paygate(
+        request,
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=payer,
+        policy_engine=_engine(tmp_path),
+        session_cache=cache,
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["paid"] is False
+    assert envelope["credentialCache"]["hit"] is True
+    assert envelope["response"]["json"] == {"cached": True}
+    assert authorizations == [authorization]
+    assert payer.calls == []
+    assert cache.list()[0].use_count == 1
+
+
+def test_payment_caches_credential_for_follow_up_request(tmp_path) -> None:
+    cache = MemoryCredentialCache()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("authorization") is None:
+            return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+        return httpx.Response(200, json={"paid": True})
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=RecordingPayer(),
+        policy_engine=_engine(tmp_path),
+        session_cache=cache,
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["paid"] is True
+    cached = cache.list()
+    assert len(cached) == 1
+    assert cached[0].authorization.startswith("Payment ")
+    assert cached[0].scope.service == "orders"
+
+
+def test_rejected_cached_credential_is_evicted_then_payment_runs(tmp_path) -> None:
+    request = PaygateRequest("GET", "https://example.test/resource")
+    scope = CredentialScope(
+        request_key=build_request_key(request.method, request.url, request.body),
+        origin_host="example.test:443",
+        service="orders",
+        protocol="Payment",
+        payer_backend="test-mode",
+        policy_hash=build_policy_hash(_config().policy),
+    )
+    cache = MemoryCredentialCache(
+        [
+            CachedCredential(
+                credential_id="cred_123",
+                scope=scope,
+                authorization="Payment stale",
+                created_at=int(time.time()),
+                expires_at=4102444800,
+            )
+        ]
+    )
+    authorizations: list[str | None] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        authorization = http_request.headers.get("authorization")
+        authorizations.append(authorization)
+        if authorization == "Payment stale":
+            return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+        if authorization is None:
+            return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+        return httpx.Response(200, json={"paid": True})
+
+    envelope = request_with_paygate(
+        request,
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=RecordingPayer(),
+        policy_engine=_engine(tmp_path),
+        session_cache=cache,
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["paid"] is True
+    assert authorizations[0] == "Payment stale"
+    assert authorizations[1] is None
+    assert authorizations[2] is not None
+    assert authorizations[2] != "Payment stale"
+    assert len(cache.list()) == 1
+    assert cache.list()[0].credential_id != "cred_123"
+
+
+def test_refresh_credential_bypasses_cache(tmp_path) -> None:
+    request = PaygateRequest("GET", "https://example.test/resource")
+    scope = CredentialScope(
+        request_key=build_request_key(request.method, request.url, request.body),
+        origin_host="example.test:443",
+        service="orders",
+        protocol="Payment",
+        payer_backend="test-mode",
+        policy_hash=build_policy_hash(_config().policy),
+    )
+    cache = MemoryCredentialCache(
+        [
+            CachedCredential(
+                credential_id="cred_123",
+                scope=scope,
+                authorization="Payment cached",
+                created_at=int(time.time()),
+                expires_at=4102444800,
+            )
+        ]
+    )
+    authorizations: list[str | None] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        authorizations.append(http_request.headers.get("authorization"))
+        if len(authorizations) == 1:
+            return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+        return httpx.Response(200, json={"paid": True})
+
+    envelope = request_with_paygate(
+        request,
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=RecordingPayer(),
+        policy_engine=_engine(tmp_path),
+        session_cache=cache,
+        refresh_credential=True,
+    )
+
+    assert envelope["ok"] is True
+    assert envelope["paid"] is True
+    assert authorizations[0] is None
+
+
+def test_trace_sink_receives_key_events(tmp_path) -> None:
+    events: list[str] = []
+
+    class RecordingTrace:
+        def emit(self, event: str, **fields: Any) -> None:
+            events.append(event)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers.get("authorization") is None:
+            return httpx.Response(402, headers={"WWW-Authenticate": _payment_header()})
+        return httpx.Response(200, json={"paid": True})
+
+    envelope = request_with_paygate(
+        PaygateRequest("GET", "https://example.test/resource"),
+        config=_config(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        payer=RecordingPayer(),
+        policy_engine=_engine(tmp_path),
+        trace_sink=RecordingTrace(),
+    )
+
+    assert envelope["ok"] is True
+    assert "request.start" in events
+    assert "challenge.received" in events
+    assert "payment.succeeded" in events
+    assert "retry.succeeded" in events

@@ -48,8 +48,31 @@ class LedgerReservationStateError(LedgerError):
     """Raised when a reservation is used after it has been released."""
 
 
-def default_ledger_path() -> Path:
+def default_ledger_path(namespace: str | None = None) -> Path:
+    normalized = (
+        "default" if namespace is None or not namespace.strip() else namespace.strip()
+    )
     state_home = os.environ.get("XDG_STATE_HOME")
+    if normalized != "default":
+        if "/" in normalized or "\\" in normalized or normalized in (".", ".."):
+            raise ValueError("profile must not contain path separators or dot segments")
+        if state_home:
+            return (
+                Path(state_home)
+                / "paygate-client"
+                / "profiles"
+                / normalized
+                / "daily-spend-ledger.json"
+            )
+        return (
+            Path.home()
+            / ".local"
+            / "state"
+            / "paygate-client"
+            / "profiles"
+            / normalized
+            / "daily-spend-ledger.json"
+        )
     if state_home:
         return Path(state_home) / "paygate-client" / "daily-spend-ledger.json"
     return (

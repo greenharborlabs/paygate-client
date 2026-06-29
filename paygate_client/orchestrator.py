@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
@@ -44,6 +45,18 @@ from paygate_client.payers.lnd_rest import LndRestPayer
 from paygate_client.payers.phoenixd import PhoenixdPayer
 from paygate_client.policy import PolicyEngine, PolicyError, PolicyRequest
 from paygate_client.redaction import redact_error_envelope
+from paygate_client.session_cache import (
+    DEFAULT_NAMESPACE,
+    CachedCredential,
+    CredentialCache,
+    CredentialScope,
+    NullCredentialCache,
+    build_credential_id,
+    build_policy_hash,
+    build_request_key,
+    normalize_namespace,
+)
+from paygate_client.trace import NullTraceSink, TraceSink
 
 
 @dataclass(frozen=True)
@@ -75,11 +88,19 @@ def request_with_paygate(
     client: httpx.Client | None = None,
     payer: Payer | None = None,
     policy_engine: PolicyEngine | None = None,
+    session_cache: CredentialCache | None = None,
+    no_pay: bool = False,
+    refresh_credential: bool = False,
+    cache_policy: str = "challenge-defined",
+    session_namespace: str | None = None,
+    trace_sink: TraceSink | None = None,
 ) -> dict[str, Any]:
     """Run the initial request, optional payment, retry, and envelope emission."""
 
     owns_client = client is None
     active_client = client if client is not None else httpx.Client()
+    active_cache = session_cache if session_cache is not None else NullCredentialCache()
+    trace = trace_sink if trace_sink is not None else NullTraceSink()
     try:
         active_payer = payer if payer is not None else payer_from_config(config)
         engine = (
@@ -97,6 +118,12 @@ def request_with_paygate(
             client=active_client,
             payer=active_payer,
             policy_engine=engine,
+            session_cache=active_cache,
+            no_pay=no_pay,
+            refresh_credential=refresh_credential,
+            cache_policy=cache_policy,
+            session_namespace=normalize_namespace(session_namespace),
+            trace_sink=trace,
         )
     finally:
         if owns_client:
@@ -110,7 +137,65 @@ def _request_with_paygate(
     client: httpx.Client,
     payer: Payer,
     policy_engine: PolicyEngine,
+    session_cache: CredentialCache,
+    no_pay: bool,
+    refresh_credential: bool,
+    cache_policy: str,
+    session_namespace: str,
+    trace_sink: TraceSink,
 ) -> dict[str, Any]:
+    trace_sink.emit(
+        "request.start", method=request.method, host=_host_port(request.url)
+    )
+    request_key = build_request_key(request.method, request.url, request.body)
+    preliminary_scope = _credential_scope(
+        request=request,
+        config=config,
+        request_key=request_key,
+        protocol=config.protocol.preferred,
+        service=None,
+        namespace=session_namespace,
+    )
+
+    cached_credential = None
+    if not no_pay and not refresh_credential:
+        cached_credential = session_cache.get(preliminary_scope)
+    trace_sink.emit(
+        "cache.lookup",
+        hit=cached_credential is not None,
+        scope=request_key,
+    )
+    if cached_credential is not None:
+        try:
+            cached_response = send_request(
+                client,
+                _to_http_request(
+                    replace(
+                        request,
+                        headers=_retry_headers(
+                            request.headers, cached_credential.authorization
+                        ),
+                    )
+                ),
+            )
+        except PaygateHttpError as exc:
+            return _error("network_failure", str(exc), paid=False)
+        if cached_response.status_code >= 200 and cached_response.status_code < 300:
+            session_cache.mark_success(cached_credential.credential_id)
+            trace_sink.emit("cache.accepted", statusCode=cached_response.status_code)
+            return _success_cached(cached_response, cached_credential)
+        if cached_response.status_code in (401, 402):
+            session_cache.mark_rejected(cached_credential.credential_id)
+            session_cache.delete(cached_credential.credential_id)
+            trace_sink.emit("cache.rejected", statusCode=cached_response.status_code)
+        else:
+            return _error(
+                "cached_credential_rejected",
+                f"cached credential returned HTTP {cached_response.status_code}",
+                paid=False,
+                response=serialize_response(cached_response),
+            )
+
     try:
         initial_response = send_request(client, _to_http_request(request))
     except PaygateHttpError as exc:
@@ -129,6 +214,13 @@ def _request_with_paygate(
     except ChallengeError as exc:
         return _error("unsupported_402_challenge", str(exc), paid=False)
 
+    trace_sink.emit(
+        "challenge.received",
+        protocol=payable_challenge.parsed.scheme,
+        amountSats=payable_challenge.amount_sats,
+        service=payable_challenge.service,
+    )
+
     try:
         approval = policy_engine.evaluate(
             PolicyRequest(
@@ -141,6 +233,21 @@ def _request_with_paygate(
     except PolicyError as exc:
         return _error("policy_denied", str(exc), paid=False)
 
+    trace_sink.emit(
+        "policy.approved",
+        maxFeeSats=approval.max_fee_sats,
+        amountSats=payable_challenge.amount_sats,
+    )
+
+    if no_pay:
+        approval.rollback()
+        trace_sink.emit("payment.skipped", reason="no-pay")
+        return _challenge_envelope(
+            payable_challenge,
+            payer_backend=config.payer.backend,
+            max_fee_sats=approval.max_fee_sats,
+        )
+
     payment_result = None
     real_payment_committed = False
     payer_invoked = payable_challenge.test_preimage is None
@@ -151,11 +258,39 @@ def _request_with_paygate(
         if payer_invoked:
             approval.commit()
             real_payment_committed = True
+        trace_sink.emit(
+            "payment.succeeded",
+            amountSats=payment_result.amount_sats,
+            feeSats=payment_result.fee_sats,
+            paymentHash=payment_result.payment_hash,
+        )
         authorization = build_authorization(
             payable_challenge.parsed,
             payment_result.preimage_hex,
             source=config.payer.backend,
         )
+        credential_scope = _credential_scope(
+            request=request,
+            config=config,
+            request_key=request_key,
+            protocol=payable_challenge.parsed.scheme,
+            service=payable_challenge.service,
+            namespace=session_namespace,
+        )
+        cached = _cacheable_credential(
+            scope=credential_scope,
+            authorization=authorization,
+            payable_challenge=payable_challenge,
+            payment_hash=payment_result.payment_hash,
+            cache_policy=cache_policy,
+        )
+        if cached is not None:
+            session_cache.put(cached)
+            trace_sink.emit(
+                "credential.cached",
+                scope=cached.scope.request_key,
+                expires=cached.expires_at,
+            )
         retry_response = send_request(
             client,
             _to_http_request(
@@ -166,6 +301,9 @@ def _request_with_paygate(
             ),
         )
         if retry_response.status_code < 200 or retry_response.status_code >= 300:
+            if cached is not None:
+                session_cache.mark_rejected(cached.credential_id)
+                session_cache.delete(cached.credential_id)
             if not real_payment_committed:
                 approval.rollback()
             return _error(
@@ -176,6 +314,9 @@ def _request_with_paygate(
             )
         if not real_payment_committed:
             approval.commit()
+        if cached is not None:
+            session_cache.mark_success(cached.credential_id)
+        trace_sink.emit("retry.succeeded", statusCode=retry_response.status_code)
         return _success_paid(
             retry_response,
             challenge=payable_challenge.parsed,
@@ -346,6 +487,72 @@ def _pay(
     return payer.pay(payer_challenge, max_fee_sats=max_fee_sats)
 
 
+def _credential_scope(
+    *,
+    request: PaygateRequest,
+    config: PaygateConfig,
+    request_key: str,
+    protocol: str,
+    service: str | None,
+    namespace: str = DEFAULT_NAMESPACE,
+) -> CredentialScope:
+    return CredentialScope(
+        namespace=namespace,
+        request_key=request_key,
+        origin_host=_host_port(request.url),
+        service=service,
+        protocol=protocol,
+        payer_backend=config.payer.backend,
+        policy_hash=build_policy_hash(config.policy),
+    )
+
+
+def _cacheable_credential(
+    *,
+    scope: CredentialScope,
+    authorization: str,
+    payable_challenge: _PayableChallenge,
+    payment_hash: str | None,
+    cache_policy: str,
+) -> CachedCredential | None:
+    expires_at = _challenge_expires(payable_challenge.parsed)
+    max_uses = None
+    normalized_policy = cache_policy.lower()
+    if normalized_policy == "single-use":
+        max_uses = 1
+    elif normalized_policy == "max-requests":
+        max_uses = 1
+    elif normalized_policy in ("challenge-defined", "until-expiry"):
+        if expires_at is None:
+            return None
+    else:
+        if expires_at is None:
+            return None
+
+    return CachedCredential(
+        credential_id=build_credential_id(scope, authorization),
+        scope=scope,
+        authorization=authorization,
+        created_at=int(time.time()),
+        expires_at=expires_at,
+        max_uses=max_uses,
+        payment_hash=payment_hash,
+        challenge_id=_challenge_id(payable_challenge.parsed),
+    )
+
+
+def _challenge_expires(challenge: ParsedChallenge) -> int | None:
+    if isinstance(challenge, ParsedPaymentChallenge):
+        return challenge.expires
+    return None
+
+
+def _challenge_id(challenge: ParsedChallenge) -> str | None:
+    if isinstance(challenge, ParsedPaymentChallenge):
+        return challenge.id
+    return None
+
+
 def _retry_headers(
     original_headers: Mapping[str, str],
     authorization: str,
@@ -383,7 +590,9 @@ def _host_port(url: str) -> str | None:
     return f"{parsed.hostname}:{port}"
 
 
-def payer_from_config(config: PaygateConfig) -> Payer:
+def payer_from_config(
+    config: PaygateConfig, *, env: Mapping[str, str] | None = None
+) -> Payer:
     """Construct the configured payer backend."""
 
     if config.payer.backend == "test-mode":
@@ -393,12 +602,13 @@ def payer_from_config(config: PaygateConfig) -> Payer:
             raise ValueError("phoenixd backend selected without phoenixd config")
         return PhoenixdPayer.from_config(
             config.phoenixd,
+            env=env,
             fee_limit_parameter=config.phoenixd.fee_limit_parameter,
         )
     if config.payer.backend == "lnd-rest":
         if config.lnd is None:
             raise ValueError("lnd-rest backend selected without lnd config")
-        return LndRestPayer(config.lnd)
+        return LndRestPayer(config.lnd, env=env)
     raise ValueError(f"payer backend {config.payer.backend!r} is not implemented")
 
 
@@ -409,6 +619,27 @@ def _success_unpaid(response: httpx.Response) -> dict[str, Any]:
             {
                 "ok": True,
                 "paid": False,
+                "response": serialize_response(response),
+            }
+        ),
+    )
+
+
+def _success_cached(
+    response: httpx.Response,
+    credential: CachedCredential,
+) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        redact_error_envelope(
+            {
+                "ok": True,
+                "paid": False,
+                "credentialCache": {
+                    "hit": True,
+                    "credentialId": credential.credential_id,
+                    "expiresAt": credential.expires_at,
+                },
                 "response": serialize_response(response),
             }
         ),
@@ -438,6 +669,36 @@ def _success_paid(
     if receipt is not None:
         envelope["receipt"] = redact_error_envelope(receipt)
     return envelope
+
+
+def _challenge_envelope(
+    challenge: _PayableChallenge,
+    *,
+    payer_backend: str,
+    max_fee_sats: int,
+) -> dict[str, Any]:
+    return cast(
+        dict[str, Any],
+        redact_error_envelope(
+            {
+                "ok": True,
+                "paid": False,
+                "wouldPay": True,
+                "payerBackend": payer_backend,
+                "protocol": challenge.parsed.scheme,
+                "amountSats": challenge.amount_sats,
+                "maxFeeSats": max_fee_sats,
+                "service": challenge.service,
+                "paymentHash": challenge.payment_hash,
+                "challenge": {
+                    "id": _challenge_id(challenge.parsed),
+                    "expiresAt": _challenge_expires(challenge.parsed),
+                    "metadata": challenge.metadata,
+                },
+            },
+            redact_invoices=True,
+        ),
+    )
 
 
 def _error(
