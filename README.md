@@ -33,6 +33,22 @@ path, allowlist entries, and spend caps. It writes the Paygate config to
 `~/.config/paygate-client/config.yaml` and stores secrets only in
 `~/.config/paygate-client/voltage-env.sh`.
 
+## Breez Preimage Doctor
+
+To test whether Breez SDK Spark can pay a BOLT11 invoice and return the
+Lightning preimage Paygate needs, run the isolated spike script:
+
+```bash
+python3 -m pip install breez-sdk-spark
+export BREEZ_API_KEY="..."
+export BREEZ_MNEMONIC="..."
+scripts/breez-preimage-doctor.py "<bolt11 invoice>"
+```
+
+The script forces `prefer_spark=False`, extracts `payment_hash` and `preimage`
+from the returned payment object, verifies `sha256(preimage) == payment_hash`,
+and prints `PASS` or a loud JSON failure.
+
 ## First Local Config
 
 Start with `test-mode`. It never sends real Lightning payments and can satisfy
