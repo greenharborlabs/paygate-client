@@ -23,6 +23,7 @@ paygate-client.local.*
 *.pem
 *.key
 secrets.*
+.breez-preimage-doctor/
 .gstack/
 
 __pycache__/
