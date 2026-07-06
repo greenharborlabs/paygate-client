@@ -30,6 +30,7 @@ from paygate_client.http import (
 )
 from paygate_client.invoices import amount_sats_from_invoice, payment_hash_from_invoice
 from paygate_client.payers import (
+    BreezPayer,
     MissingPreimageError,
     Payer,
     PayerError,
@@ -609,6 +610,10 @@ def payer_from_config(
         if config.lnd is None:
             raise ValueError("lnd-rest backend selected without lnd config")
         return LndRestPayer(config.lnd, env=env)
+    if config.payer.backend == "breez":
+        if config.breez is None:
+            raise ValueError("breez backend selected without breez config")
+        return BreezPayer(config.breez, env=env)
     raise ValueError(f"payer backend {config.payer.backend!r} is not implemented")
 
 

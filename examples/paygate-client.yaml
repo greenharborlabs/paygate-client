@@ -31,6 +31,22 @@ protocol:
 #   macaroon_hex_env: "PAYGATE_CLIENT_LND_MACAROON_HEX"
 #   tls_cert_path_env: "PAYGATE_CLIENT_LND_TLS_CERT_PATH"
 
+# Breez SDK Spark can pay BOLT11 invoices without running your own node. Paygate
+# forces prefer_spark=false and requires a returned Lightning preimage.
+#
+# To use it, install the optional dependency, change payer.backend to breez, and
+# set:
+#   python -m pip install "paygate-client[breez]"
+#   export BREEZ_API_KEY="replace-with-breez-api-key"
+#   export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
+#
+# breez:
+#   api_key_env: "BREEZ_API_KEY"
+#   mnemonic_env: "BREEZ_MNEMONIC"
+#   network: mainnet
+#   storage_dir: "~/.local/share/paygate-client/breez"
+#   completion_timeout_secs: 10
+
 # Phoenixd is a capability spike. Do not use it for automated real payments
 # until doctor and pay-invoice prove preimage return and fee-limit enforcement
 # for your exact Phoenixd API version.

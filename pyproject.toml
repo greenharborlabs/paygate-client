@@ -18,6 +18,9 @@ dependencies = [
 paygate = "paygate_client.cli:app"
 
 [project.optional-dependencies]
+breez = [
+    "breez-sdk-spark>=0.17.1,<0.18",
+]
 dev = [
     "mypy>=1.10,<2",
     "poethepoet>=0.27,<1",

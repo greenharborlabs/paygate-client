@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from paygate_client.config import (
+    BreezConfig,
     EnvRef,
     LndConfig,
     PayerConfig,
@@ -26,6 +27,7 @@ from paygate_client.orchestrator import (
     request_with_paygate,
 )
 from paygate_client.payers import AbstractPayer, RawPaymentResult, TestModePayer
+from paygate_client.payers.breez import BreezPayer
 from paygate_client.payers.lnd_rest import LndRestPayer
 from paygate_client.payers.phoenixd import PhoenixdPayer
 from paygate_client.policy import PolicyEngine
@@ -210,6 +212,26 @@ def test_payer_from_config_constructs_lnd_rest(monkeypatch) -> None:
     payer = payer_from_config(config)
 
     assert isinstance(payer, LndRestPayer)
+    assert payer.supports_max_fee_limit is True
+
+
+def test_payer_from_config_constructs_breez(monkeypatch) -> None:
+    monkeypatch.setenv("BREEZ_API_KEY", "api-key")
+    monkeypatch.setenv("BREEZ_MNEMONIC", "seed words")
+    config = PaygateConfig(
+        payer=PayerConfig(backend="breez"),
+        policy=_base_policy(),
+        protocol=ProtocolConfig(preferred="Payment"),
+        breez=BreezConfig(
+            api_key_env=SecretRef("BREEZ_API_KEY"),
+            mnemonic_env=SecretRef("BREEZ_MNEMONIC"),
+            storage_dir=".breez-test",
+        ),
+    )
+
+    payer = payer_from_config(config)
+
+    assert isinstance(payer, BreezPayer)
     assert payer.supports_max_fee_limit is True
 
 

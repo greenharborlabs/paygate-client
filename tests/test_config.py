@@ -102,6 +102,144 @@ policy:
     assert config.phoenixd.fee_limit_parameter == "maxFeeSat"
 
 
+def test_breez_config_resolves_secrets_without_leaking_values(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: breez
+breez:
+  api_key_env: "BREEZ_API_KEY"
+  mnemonic_env: "BREEZ_MNEMONIC"
+  network: mainnet
+  storage_dir: ".breez-test"
+  completion_timeout_secs: 12
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(
+        config_path,
+        env={
+            "BREEZ_API_KEY": "api-secret",
+            "BREEZ_MNEMONIC": "seed words",
+        },
+    )
+
+    assert config.payer.backend == "breez"
+    assert config.breez is not None
+    assert config.breez.api_key_env.env_var == "BREEZ_API_KEY"
+    assert config.breez.mnemonic_env.env_var == "BREEZ_MNEMONIC"
+    assert config.breez.network == "mainnet"
+    assert config.breez.storage_dir == ".breez-test"
+    assert config.breez.completion_timeout_secs == 12
+    rendered = f"{config!r} {config} {asdict(config)}"
+    assert "api-secret" not in rendered
+    assert "seed words" not in rendered
+    assert "BREEZ_API_KEY" in rendered
+    assert "BREEZ_MNEMONIC" in rendered
+
+
+def test_breez_config_defaults_optional_fields(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: breez
+breez:
+  api_key_env: "BREEZ_API_KEY"
+  mnemonic_env: "BREEZ_MNEMONIC"
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(
+        config_path,
+        env={
+            "BREEZ_API_KEY": "api-secret",
+            "BREEZ_MNEMONIC": "seed words",
+        },
+    )
+
+    assert config.breez is not None
+    assert config.breez.network == "mainnet"
+    assert config.breez.storage_dir == "~/.local/share/paygate-client/breez"
+    assert config.breez.completion_timeout_secs == 10
+
+
+def test_breez_missing_secret_env_raises_missing_secret(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: breez
+breez:
+  api_key_env: "BREEZ_API_KEY"
+  mnemonic_env: "BREEZ_MNEMONIC"
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(MissingSecretError, match="BREEZ_MNEMONIC"):
+        load_config(config_path, env={"BREEZ_API_KEY": "api-secret"})
+
+
+def test_breez_invalid_network_fails_validation(tmp_path):
+    config_path = tmp_path / "paygate.yml"
+    config_path.write_text(
+        """
+payer:
+  backend: breez
+breez:
+  api_key_env: "BREEZ_API_KEY"
+  mnemonic_env: "BREEZ_MNEMONIC"
+  network: mutinynet
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - localhost:8080
+  allowed_services:
+    - paygate-reference-service
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="breez.network"):
+        load_config(
+            config_path,
+            env={
+                "BREEZ_API_KEY": "api-secret",
+                "BREEZ_MNEMONIC": "seed words",
+            },
+        )
+
+
 def test_missing_config_file_raises_typed_actionable_error(tmp_path):
     missing = tmp_path / "missing.yml"
 

@@ -88,6 +88,21 @@ class LndConfig:
 
 
 @dataclass(frozen=True)
+class BreezConfig:
+    api_key_env: SecretRef
+    mnemonic_env: SecretRef
+    network: str = "mainnet"
+    storage_dir: str = "~/.local/share/paygate-client/breez"
+    completion_timeout_secs: int = 10
+
+    def resolve_api_key(self, env: Mapping[str, str] | None = None) -> str:
+        return self.api_key_env.resolve(env)
+
+    def resolve_mnemonic(self, env: Mapping[str, str] | None = None) -> str:
+        return self.mnemonic_env.resolve(env)
+
+
+@dataclass(frozen=True)
 class PolicyConfig:
     max_request_sats: int
     max_fee_sats: int
@@ -109,9 +124,11 @@ class PaygateConfig:
     protocol: ProtocolConfig
     phoenixd: PhoenixdConfig | None = None
     lnd: LndConfig | None = None
+    breez: BreezConfig | None = None
 
 
-_SUPPORTED_BACKENDS = {"test-mode", "phoenixd", "lnd-rest"}
+_SUPPORTED_BACKENDS = {"test-mode", "phoenixd", "lnd-rest", "breez"}
+_SUPPORTED_BREEZ_NETWORKS = {"mainnet", "testnet", "regtest", "signet"}
 _SUPPORTED_PROTOCOLS = {"Payment", "L402"}
 
 
@@ -185,10 +202,13 @@ def _load_mapping(raw: Mapping[str, object], env: Mapping[str, str]) -> PaygateC
 
     phoenixd = None
     lnd = None
+    breez = None
     if payer.backend == "phoenixd":
         phoenixd = _load_phoenixd(raw.get("phoenixd"), env)
     elif payer.backend == "lnd-rest":
         lnd = _load_lnd(raw.get("lnd"), env)
+    elif payer.backend == "breez":
+        breez = _load_breez(raw.get("breez"), env)
 
     return PaygateConfig(
         payer=payer,
@@ -196,6 +216,7 @@ def _load_mapping(raw: Mapping[str, object], env: Mapping[str, str]) -> PaygateC
         protocol=protocol,
         phoenixd=phoenixd,
         lnd=lnd,
+        breez=breez,
     )
 
 
@@ -250,6 +271,40 @@ def _load_lnd(raw: object, env: Mapping[str, str]) -> LndConfig:
         rest_url_env=rest_url_ref,
         macaroon_hex_env=macaroon_ref,
         tls_cert_path_env=tls_cert_ref,
+    )
+
+
+def _load_breez(raw: object, env: Mapping[str, str]) -> BreezConfig:
+    breez = _require_mapping(raw, "breez")
+    api_key_ref = SecretRef(_require_string(breez, "api_key_env", "breez.api_key_env"))
+    mnemonic_ref = SecretRef(
+        _require_string(breez, "mnemonic_env", "breez.mnemonic_env")
+    )
+    network = "mainnet"
+    if breez.get("network") is not None:
+        network = _require_string(breez, "network", "breez.network")
+    if network not in _SUPPORTED_BREEZ_NETWORKS:
+        supported = ", ".join(sorted(_SUPPORTED_BREEZ_NETWORKS))
+        raise ValidationError(f"breez.network must be one of: {supported}.")
+    storage_dir = "~/.local/share/paygate-client/breez"
+    if breez.get("storage_dir") is not None:
+        storage_dir = _require_string(breez, "storage_dir", "breez.storage_dir")
+    completion_timeout_secs = 10
+    if breez.get("completion_timeout_secs") is not None:
+        completion_timeout_secs = _require_positive_int(
+            breez,
+            "completion_timeout_secs",
+            "breez.completion_timeout_secs",
+        )
+
+    api_key_ref.resolve(env)
+    mnemonic_ref.resolve(env)
+    return BreezConfig(
+        api_key_env=api_key_ref,
+        mnemonic_env=mnemonic_ref,
+        network=network,
+        storage_dir=storage_dir,
+        completion_timeout_secs=completion_timeout_secs,
     )
 
 
@@ -310,6 +365,13 @@ def _require_non_negative_int(raw: Mapping[str, object], key: str) -> int:
     value = raw.get(key)
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValidationError(f"{path} must be a non-negative integer number of sats.")
+    return value
+
+
+def _require_positive_int(raw: Mapping[str, object], key: str, path: str) -> int:
+    value = raw.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValidationError(f"{path} must be a positive integer.")
     return value
 
 

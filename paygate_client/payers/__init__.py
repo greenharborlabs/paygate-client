@@ -18,11 +18,13 @@ from paygate_client.payers.base import (
     normalize_preimage,
     verify_payment_result,
 )
+from paygate_client.payers.breez import BreezPayer
 from paygate_client.payers.test_mode import TestModePayer
 
 __all__ = [
     "AbstractPayer",
     "BackendUnavailableError",
+    "BreezPayer",
     "FeeLimitError",
     "FeeLimitUnsupportedError",
     "MissingPreimageError",
