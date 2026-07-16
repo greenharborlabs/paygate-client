@@ -441,6 +441,71 @@ paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
 `payment_request` and `fee_limit_sat`. It requires a terminal successful update
 with `payment_preimage`.
 
+## Real-Money Backend: Breez SDK Spark
+
+Breez SDK Spark can pay BOLT11 invoices without running a Lightning node. For
+Paygate, Spark preference is disabled so successful payments must return a
+Lightning preimage.
+
+Install optional Breez support:
+
+```bash
+python -m pip install "paygate-client[breez]"
+```
+
+For local wallet checks from this repository, use the wrapper script. It uses
+the repo `.venv`, installs the Breez extra there if needed, and avoids
+Homebrew's externally managed Python restriction:
+
+```bash
+export BREEZ_API_KEY="replace-with-breez-api-key"
+export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
+scripts/check-breez-wallet.sh
+```
+
+To print wallet payment history, use the matching history wrapper:
+
+```bash
+scripts/breez-payment-history.sh
+scripts/breez-payment-history.sh --limit 10 --status completed
+scripts/breez-payment-history.sh --type send --from 2026-07-01T00:00:00Z
+```
+
+The history script outputs JSON, sorts newest first by default, and redacts
+sensitive fields such as preimages unless `--include-sensitive` is passed.
+
+```yaml
+payer:
+  backend: breez
+policy:
+  max_request_sats: 50
+  max_fee_sats: 10
+  daily_budget_sats: 500
+  allowed_hosts:
+    - api.example.com:443
+  allowed_services:
+    - paygate-reference-service
+protocol:
+  preferred: Payment
+  allow_l402: true
+breez:
+  api_key_env: "BREEZ_API_KEY"
+  mnemonic_env: "BREEZ_MNEMONIC"
+  network: mainnet
+  storage_dir: "~/.local/share/paygate-client/breez"
+  completion_timeout_secs: 10
+```
+
+```bash
+export BREEZ_API_KEY="replace-with-breez-api-key"
+export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
+paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
+```
+
+The Breez backend checks the prepared `lightning_fee_sats` before submitting the
+payment, sends with `prefer_spark=false`, and refuses success unless the returned
+preimage verifies against the payment hash.
+
 ## Phoenixd
 
 Phoenixd support is a capability spike until `paygate backend doctor --json` and
