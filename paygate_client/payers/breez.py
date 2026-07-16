@@ -57,6 +57,11 @@ class BreezPayer(AbstractPayer):
 
     supports_max_fee_limit = True
 
+    def check_ready(self) -> None:
+        """Require the optional Breez SDK before reporting backend readiness."""
+
+        self._load_sdk()
+
     def __init__(
         self,
         config: BreezConfig,
@@ -157,7 +162,7 @@ class BreezPayer(AbstractPayer):
         if self._sdk_module is not None:
             return self._sdk_module
         try:
-            import breez_sdk_spark as breez  # type: ignore[import-not-found]
+            import breez_sdk_spark as breez
         except ImportError as exc:
             raise BreezDependencyError(
                 "Install Breez support first: python -m pip install "

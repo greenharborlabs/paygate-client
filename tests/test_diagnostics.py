@@ -166,6 +166,13 @@ class BackendTimeoutError(BackendUnavailableError):
     pass
 
 
+class MissingDependencyPayer(RecordingPayer):
+    def check_ready(self) -> None:
+        raise BackendUnavailableError(
+            "Install Breez support first: python -m pip install 'paygate-client[breez]'"
+        )
+
+
 def test_backend_doctor_reports_preimage_support(tmp_path) -> None:
     payer = RecordingPayer()
 
@@ -180,6 +187,18 @@ def test_backend_doctor_reports_preimage_support(tmp_path) -> None:
         "preimageRequired": True,
         "maxFeeLimitSupported": True,
     }
+    assert envelope["backendReady"] is True
+
+
+def test_backend_doctor_fails_when_backend_dependency_is_missing(tmp_path) -> None:
+    envelope = backend_doctor(
+        _config_file(tmp_path),
+        payer_factory=lambda config: MissingDependencyPayer(),
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "PAYER_BACKEND_DEPENDENCY_MISSING"
+    assert "paygate-client[breez]" in envelope["error"]["message"]
 
 
 def test_backend_pay_invoice_reports_verified_preimage_and_redacts(tmp_path) -> None:

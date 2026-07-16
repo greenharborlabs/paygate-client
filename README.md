@@ -462,8 +462,13 @@ Lightning preimage.
 Install optional Breez support:
 
 ```bash
-python -m pip install "paygate-client[breez]"
+pipx install --force "paygate-client[breez]"
 ```
+
+The Breez extra is required even when the base `paygate` command is already
+installed. `paygate backend doctor` loads the configured backend's local
+dependencies and exits nonzero before any invoice is created when the SDK is
+missing.
 
 For local wallet checks from this repository, use the wrapper script. It uses
 the repo `.venv`, installs the Breez extra there if needed, and avoids

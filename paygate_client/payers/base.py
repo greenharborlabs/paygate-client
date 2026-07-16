@@ -109,6 +109,11 @@ class AbstractPayer(ABC):
 
     supports_max_fee_limit = False
 
+    def check_ready(self) -> None:
+        """Validate local backend prerequisites without submitting payment."""
+
+        return None
+
     def pay(self, challenge: PaymentChallenge, *, max_fee_sats: int) -> PaymentResult:
         self._ensure_fee_limit(max_fee_sats)
         if challenge.payment_hash is None and not challenge.local_synthetic:
