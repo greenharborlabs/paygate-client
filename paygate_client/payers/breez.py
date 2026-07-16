@@ -157,7 +157,7 @@ class BreezPayer(AbstractPayer):
         if self._sdk_module is not None:
             return self._sdk_module
         try:
-            import breez_sdk_spark as breez  # type: ignore[import-untyped]
+            import breez_sdk_spark as breez  # type: ignore[import-not-found]
         except ImportError as exc:
             raise BreezDependencyError(
                 "Install Breez support first: python -m pip install "
