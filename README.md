@@ -22,6 +22,18 @@ python3 -m pip install -e ".[dev]"
 paygate --help
 ```
 
+To run MyPy locally, use the self-bootstrapping wrapper:
+
+```bash
+scripts/typecheck.sh
+```
+
+It creates an isolated repo `.venv-typecheck` using Python 3.9 (the CI
+version) and installs or refreshes the development dependencies whenever
+`pyproject.toml` changes. Pass paths or MyPy options through to MyPy, for
+example `scripts/typecheck.sh paygate_client`. If Python 3.9 is not your default
+interpreter, set `PAYGATE_CLIENT_PYTHON` to its path.
+
 For guided Voltage/LND setup, run:
 
 ```bash
