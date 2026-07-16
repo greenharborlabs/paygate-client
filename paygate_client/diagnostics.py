@@ -59,12 +59,16 @@ def backend_doctor(
                 "selected payer backend cannot enforce max_fee_sats before payment",
                 backend=config.payer.backend,
             )
+        readiness_check = getattr(payer, "check_ready", None)
+        if callable(readiness_check):
+            readiness_check()
         return _redact(
             {
                 "ok": True,
                 "backend": config.payer.backend,
                 "configValid": True,
                 "envSecretsAvailable": True,
+                "backendReady": True,
                 "capabilities": {
                     "preimageRequired": True,
                     "maxFeeLimitSupported": supports_max_fee_limit,
@@ -75,6 +79,8 @@ def backend_doctor(
         return _error("PAYGATE_SECRET_MISSING", str(exc))
     except ConfigError as exc:
         return _error("PAYGATE_CONFIG_INVALID", str(exc))
+    except BackendUnavailableError as exc:
+        return _error(_classify_backend_unavailable(exc), str(exc))
     except Exception as exc:
         return _error("PAYER_BACKEND_SELECTION_FAILED", str(exc))
 
@@ -171,6 +177,8 @@ def _pay_and_verify(
 def _classify_backend_unavailable(exc: BackendUnavailableError) -> str:
     name = type(exc).__name__.lower()
     message = str(exc).lower()
+    if "dependency" in name or "install" in message:
+        return "PAYER_BACKEND_DEPENDENCY_MISSING"
     if "timeout" in name or "timedout" in name:
         return "PAYER_BACKEND_TIMEOUT"
     if (

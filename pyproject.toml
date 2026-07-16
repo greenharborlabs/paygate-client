@@ -59,3 +59,7 @@ select = ["E", "F", "I", "UP", "B"]
 python_version = "3.9"
 packages = ["paygate_client"]
 strict = true
+
+[[tool.mypy.overrides]]
+module = "breez_sdk_spark"
+ignore_missing_imports = true

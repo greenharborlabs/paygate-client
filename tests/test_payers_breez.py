@@ -13,6 +13,7 @@ from paygate_client.payers.base import (
     PreimageVerificationError,
 )
 from paygate_client.payers.breez import (
+    BreezDependencyError,
     BreezFeeLimitExceededError,
     BreezMalformedResponseError,
     BreezPayer,
@@ -150,6 +151,20 @@ def test_breez_success_forces_lightning_and_returns_verified_result() -> None:
     assert fake_breez.sent is True
     assert fake_breez.disconnected is True
     assert fake_breez.send_options.prefer_spark is False
+
+
+def test_breez_readiness_fails_when_sdk_dependency_is_missing(monkeypatch) -> None:
+    payer = BreezPayer(_config(), env=_env())
+
+    def missing_sdk() -> object:
+        raise BreezDependencyError(
+            "Install Breez support first: python -m pip install 'paygate-client[breez]'"
+        )
+
+    monkeypatch.setattr(payer, "_load_sdk", missing_sdk)
+
+    with pytest.raises(BreezDependencyError, match=r"paygate-client\[breez\]"):
+        payer.check_ready()
 
 
 def test_breez_rejects_prepared_fee_above_limit_before_send() -> None:
