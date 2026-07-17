@@ -69,6 +69,11 @@ class BreezPayer(AbstractPayer):
         env: Mapping[str, str] | None = None,
         sdk_module: ModuleType | Any | None = None,
     ) -> None:
+        # Prove the optional runtime is available before resolving wallet
+        # credentials. This keeps readiness checks safe on machines that have
+        # not installed the Breez extra.
+        self._sdk_module = sdk_module
+        self._load_sdk()
         try:
             self._api_key = config.resolve_api_key(env)
             self._mnemonic = config.resolve_mnemonic(env)
@@ -77,7 +82,6 @@ class BreezPayer(AbstractPayer):
         self._network = config.network
         self._storage_dir = str(Path(config.storage_dir).expanduser())
         self._completion_timeout_secs = config.completion_timeout_secs
-        self._sdk_module = sdk_module
 
     def _pay_invoice(
         self, challenge: PaymentChallenge, *, max_fee_sats: int
@@ -165,9 +169,10 @@ class BreezPayer(AbstractPayer):
             import breez_sdk_spark as breez
         except ImportError as exc:
             raise BreezDependencyError(
-                "Install Breez support first: python -m pip install "
-                "'paygate-client[breez]'"
+                "Reinstall the same paygate-client distribution with the Breez extra "
+                "enabled (add [breez] to the original install requirement)."
             ) from exc
+        self._sdk_module = breez
         return breez
 
 

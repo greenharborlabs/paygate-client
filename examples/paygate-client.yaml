@@ -36,7 +36,7 @@ protocol:
 #
 # To use it, install the optional dependency, change payer.backend to breez, and
 # set:
-#   python -m pip install "paygate-client[breez]"
+#   python -m pip install "paygate-client[breez] @ git+https://github.com/greenharborlabs/paygate-client.git@e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
 #   export BREEZ_API_KEY="replace-with-breez-api-key"
 #   export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
 #

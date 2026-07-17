@@ -37,6 +37,31 @@ def _config_file(tmp_path) -> str:
     return str(path)
 
 
+def _breez_config_file(tmp_path) -> str:
+    path = tmp_path / "breez-paygate.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "payer:",
+                "  backend: breez",
+                "policy:",
+                "  max_request_sats: 100",
+                "  max_fee_sats: 7",
+                "  daily_budget_sats: 100",
+                "  allowed_hosts:",
+                "    - example.test:443",
+                "  allowed_services:",
+                "    - orders",
+                "breez:",
+                "  api_key_env: BREEZ_API_KEY",
+                "  mnemonic_env: BREEZ_MNEMONIC",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 def test_request_command_emits_json_and_exits_zero(monkeypatch, tmp_path) -> None:
     seen = {}
 
@@ -269,6 +294,35 @@ def test_backend_doctor_command_uses_test_backend_config(tmp_path) -> None:
     assert envelope["ok"] is True
     assert envelope["backend"] == "test-mode"
     assert envelope["capabilities"]["maxFeeLimitSupported"] is True
+
+
+def test_backend_doctor_missing_breez_sdk_exits_nonzero_without_secrets(
+    monkeypatch, tmp_path
+) -> None:
+    from paygate_client.payers.breez import BreezDependencyError, BreezPayer
+
+    def missing_sdk(self: BreezPayer) -> object:
+        raise BreezDependencyError(
+            "Reinstall the same paygate-client distribution with the Breez extra "
+            "enabled (add [breez] to the original install requirement)."
+        )
+
+    monkeypatch.setattr(BreezPayer, "_load_sdk", missing_sdk)
+    result = CliRunner().invoke(
+        app,
+        ["backend", "doctor", "--config", _breez_config_file(tmp_path), "--json"],
+        env={
+            "BREEZ_API_KEY": "sentinel-api-secret",
+            "BREEZ_MNEMONIC": "sentinel wallet mnemonic",
+        },
+    )
+
+    assert result.exit_code == 1
+    envelope = json.loads(result.output)
+    assert envelope["error"]["code"] == "PAYER_BACKEND_DEPENDENCY_MISSING"
+    assert "same paygate-client distribution" in envelope["error"]["message"]
+    assert "sentinel-api-secret" not in result.output
+    assert "sentinel wallet mnemonic" not in result.output
 
 
 def test_backend_doctor_missing_config_emits_diagnostic_json(tmp_path) -> None:
