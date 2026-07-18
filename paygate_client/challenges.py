@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Union
+from typing import Any
 
 from paygate_client.config import ProtocolConfig
 
@@ -105,7 +105,7 @@ class L402Challenge:
         raise MissingTokenError("L402 challenge is missing token or macaroon")
 
 
-ParsedChallenge = Union[PaymentChallenge, L402Challenge]
+ParsedChallenge = PaymentChallenge | L402Challenge
 
 _SUPPORTED_SCHEMES = {"payment": "Payment", "l402": "L402"}
 _KNOWN_SCHEMES = {"payment", "l402", "basic", "bearer"}

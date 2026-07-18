@@ -10,8 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
 import pip
+import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
