@@ -74,3 +74,17 @@ jobs:
           python -m pip install --upgrade pip &&
           python -m pip install ".[breez]" &&
           python -c "import breez_sdk_spark; print(breez_sdk_spark.__name__)"
+
+  required-check:
+    name: Tests and quality gates
+    needs: [quality, breez-resolution-and-import]
+    if: >-
+      ${{ always() && needs.quality.result == 'success' &&
+      needs.breez-resolution-and-import.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Confirm all CI jobs passed
+        run: "true"
