@@ -10,18 +10,18 @@ cd "$ROOT_DIR"
 
 if [[ ! -x "$PYTHON" ]]; then
   BOOTSTRAP_PYTHON="${PAYGATE_CLIENT_PYTHON:-}"
-  if [[ -z "$BOOTSTRAP_PYTHON" ]] && command -v python3.9 >/dev/null 2>&1; then
-    BOOTSTRAP_PYTHON="python3.9"
+  if [[ -z "$BOOTSTRAP_PYTHON" ]] && command -v python3.10 >/dev/null 2>&1; then
+    BOOTSTRAP_PYTHON="python3.10"
   fi
   if [[ -z "$BOOTSTRAP_PYTHON" && -x "$ROOT_DIR/.venv/bin/python" ]]; then
     BOOTSTRAP_PYTHON="$ROOT_DIR/.venv/bin/python"
   fi
   if [[ -z "$BOOTSTRAP_PYTHON" ]]; then
-    echo "Python 3.9 is required to mirror CI. Set PAYGATE_CLIENT_PYTHON to it." >&2
+    echo "Python 3.10 is required to mirror CI. Set PAYGATE_CLIENT_PYTHON to it." >&2
     exit 1
   fi
-  if ! "$BOOTSTRAP_PYTHON" -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 9))'; then
-    echo "Python 3.9 is required to mirror CI. Set PAYGATE_CLIENT_PYTHON to it." >&2
+  if ! "$BOOTSTRAP_PYTHON" -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 10))'; then
+    echo "Python 3.10 is required to mirror CI. Set PAYGATE_CLIENT_PYTHON to it." >&2
     exit 1
   fi
 

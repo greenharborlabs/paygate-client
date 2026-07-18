@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import json
+import sys
 import time
 from hashlib import sha256
+from types import ModuleType
 from typing import Any
 
 import httpx
@@ -216,6 +218,9 @@ def test_payer_from_config_constructs_lnd_rest(monkeypatch) -> None:
 
 
 def test_payer_from_config_constructs_breez(monkeypatch) -> None:
+    # Construction verifies the optional SDK is importable; payment behavior is
+    # covered in the dedicated Breez-extra CI jobs.
+    monkeypatch.setitem(sys.modules, "breez_sdk_spark", ModuleType("breez_sdk_spark"))
     monkeypatch.setenv("BREEZ_API_KEY", "api-key")
     monkeypatch.setenv("BREEZ_MNEMONIC", "seed words")
     config = PaygateConfig(

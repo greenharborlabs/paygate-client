@@ -91,6 +91,31 @@ def _lnd_config_file(tmp_path) -> str:
     return str(path)
 
 
+def _breez_config_file(tmp_path) -> str:
+    path = tmp_path / "breez-paygate.yaml"
+    path.write_text(
+        "\n".join(
+            [
+                "payer:",
+                "  backend: breez",
+                "policy:",
+                "  max_request_sats: 100",
+                "  max_fee_sats: 7",
+                "  daily_budget_sats: 100",
+                "  allowed_hosts:",
+                "    - example.test:443",
+                "  allowed_services:",
+                "    - orders",
+                "breez:",
+                "  api_key_env: BREEZ_API_KEY",
+                "  mnemonic_env: BREEZ_MNEMONIC",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
 def _hash_preimage(preimage_hex: str) -> str:
     return sha256(bytes.fromhex(preimage_hex)).hexdigest()
 
@@ -169,7 +194,8 @@ class BackendTimeoutError(BackendUnavailableError):
 class MissingDependencyPayer(RecordingPayer):
     def check_ready(self) -> None:
         raise BackendUnavailableError(
-            "Install Breez support first: python -m pip install 'paygate-client[breez]'"
+            "Reinstall the same paygate-client distribution with the Breez extra "
+            "enabled (add [breez] to the original install requirement)."
         )
 
 
@@ -198,7 +224,38 @@ def test_backend_doctor_fails_when_backend_dependency_is_missing(tmp_path) -> No
 
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "PAYER_BACKEND_DEPENDENCY_MISSING"
-    assert "paygate-client[breez]" in envelope["error"]["message"]
+    assert "same paygate-client distribution" in envelope["error"]["message"]
+    rendered = json.dumps(envelope)
+    assert "api-secret" not in rendered
+    assert "wallet mnemonic" not in rendered
+
+
+def test_breez_backend_doctor_missing_sdk_is_nonzero_and_redacts_secrets(
+    monkeypatch, tmp_path
+) -> None:
+    from paygate_client.payers.breez import BreezDependencyError, BreezPayer
+
+    def missing_sdk(self: BreezPayer) -> object:
+        raise BreezDependencyError(
+            "Reinstall the same paygate-client distribution with the Breez extra "
+            "enabled (add [breez] to the original install requirement)."
+        )
+
+    monkeypatch.setattr(BreezPayer, "_load_sdk", missing_sdk)
+    envelope = backend_doctor(
+        _breez_config_file(tmp_path),
+        env={
+            "BREEZ_API_KEY": "sentinel-api-secret",
+            "BREEZ_MNEMONIC": "sentinel wallet mnemonic",
+        },
+    )
+
+    assert envelope["ok"] is False
+    assert envelope["error"]["code"] == "PAYER_BACKEND_DEPENDENCY_MISSING"
+    assert "same paygate-client distribution" in envelope["error"]["message"]
+    rendered = json.dumps(envelope)
+    assert "sentinel-api-secret" not in rendered
+    assert "sentinel wallet mnemonic" not in rendered
 
 
 def test_backend_pay_invoice_reports_verified_preimage_and_redacts(tmp_path) -> None:

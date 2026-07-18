@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import venv
 from hashlib import sha256
+from importlib.metadata import version
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pip
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from paygate_client.config import BreezConfig, SecretRef
 from paygate_client.payers.base import (
@@ -153,18 +162,134 @@ def test_breez_success_forces_lightning_and_returns_verified_result() -> None:
     assert fake_breez.send_options.prefer_spark is False
 
 
-def test_breez_readiness_fails_when_sdk_dependency_is_missing(monkeypatch) -> None:
-    payer = BreezPayer(_config(), env=_env())
+def test_breez_missing_sdk_is_reported_before_resolving_wallet_secrets(
+    monkeypatch,
+) -> None:
+    resolved: list[str] = []
 
-    def missing_sdk() -> object:
+    def missing_sdk(self: BreezPayer) -> object:
         raise BreezDependencyError(
-            "Install Breez support first: python -m pip install 'paygate-client[breez]'"
+            "Reinstall the same paygate-client distribution with the Breez extra "
+            "enabled (add [breez] to the original install requirement)."
         )
 
-    monkeypatch.setattr(payer, "_load_sdk", missing_sdk)
+    def resolve_api_key(self: BreezConfig, env: object = None) -> str:
+        resolved.append("api-key")
+        return "sentinel-api-key"
 
-    with pytest.raises(BreezDependencyError, match=r"paygate-client\[breez\]"):
-        payer.check_ready()
+    def resolve_mnemonic(self: BreezConfig, env: object = None) -> str:
+        resolved.append("mnemonic")
+        return "sentinel wallet mnemonic"
+
+    monkeypatch.setattr(BreezPayer, "_load_sdk", missing_sdk)
+    monkeypatch.setattr(BreezConfig, "resolve_api_key", resolve_api_key)
+    monkeypatch.setattr(BreezConfig, "resolve_mnemonic", resolve_mnemonic)
+
+    with pytest.raises(BreezDependencyError, match="same paygate-client distribution"):
+        BreezPayer(_config(), env=_env())
+
+    assert resolved == []
+
+
+def test_readme_breez_source_install_is_pinned_and_pypi_is_future_only() -> None:
+    repository = Path(__file__).parents[1]
+    readme = repository / "README.md"
+    content = readme.read_text(encoding="utf-8")
+    requirement_text = (
+        "paygate-client[breez] @ "
+        "git+https://github.com/greenharborlabs/paygate-client.git@"
+        "e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
+    )
+
+    requirement = Requirement(requirement_text)
+
+    assert requirement.name == "paygate-client"
+    assert requirement.extras == {"breez"}
+    assert requirement.url == (
+        "git+https://github.com/greenharborlabs/paygate-client.git@"
+        "e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
+    )
+    assert requirement_text in content
+    bare_pypi_command = 'pipx install --force "paygate-client[breez]"'
+    assert content.count(bare_pypi_command) == 1
+    bare_command_offset = content.index(bare_pypi_command)
+    assert (
+        "After paygate-client is published to PyPI"
+        in content[bare_command_offset - 200 : bare_command_offset]
+    )
+    example = (repository / "examples" / "paygate-client.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert requirement_text in example
+    assert '"paygate-client[breez]"' not in example
+
+
+def test_readme_breez_requirement_installs_from_local_pinned_git_without_deps(
+    tmp_path: Path,
+) -> None:
+    repository = Path(__file__).parents[1]
+    content = (repository / "README.md").read_text(encoding="utf-8")
+    expected_commit = "e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
+    remote_requirement_text = (
+        "paygate-client[breez] @ git+https://github.com/greenharborlabs/"
+        f"paygate-client.git@{expected_commit}"
+    )
+    remote_requirement = Requirement(remote_requirement_text)
+
+    assert remote_requirement.url is not None
+    assert remote_requirement.url.endswith(expected_commit)
+    assert remote_requirement.extras == {"breez"}
+    assert remote_requirement_text in content
+
+    environment = tmp_path / "pip-validation"
+    venv.EnvBuilder(with_pip=True).create(environment)
+    executable = "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    python = environment / executable
+    local_requirement = (
+        f"paygate-client[breez] @ git+{repository.as_uri()}@{expected_commit}"
+    )
+    parsed_local_requirement = Requirement(local_requirement)
+
+    assert parsed_local_requirement.name == remote_requirement.name
+    assert parsed_local_requirement.extras == remote_requirement.extras
+    assert parsed_local_requirement.url is not None
+    assert parsed_local_requirement.url.endswith(expected_commit)
+
+    # ensurepip's bundled tooling can be too old for this PEP 621 project.
+    # The dev extra explicitly provides this compatible backend; expose the
+    # runner's local site-packages to the otherwise fresh venv rather than
+    # downloading build tooling during this offline validation.
+    assert Version(version("setuptools")) >= Version("77.0.3")
+    pip_package_root = str(Path(pip.__file__).resolve().parents[1])
+    python_path = os.environ.get("PYTHONPATH")
+    environment_variables = os.environ.copy()
+    environment_variables["PYTHONPATH"] = (
+        pip_package_root
+        if not python_path
+        else f"{pip_package_root}{os.pathsep}{python_path}"
+    )
+    result = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--dry-run",
+            "--ignore-installed",
+            "--no-deps",
+            "--no-build-isolation",
+            local_requirement,
+        ],
+        capture_output=True,
+        text=True,
+        env=environment_variables,
+    )
+    # A fresh venv intentionally contains only ensurepip's bootstrap tooling.
+    # --dry-run still makes pip clone and resolve the pinned local Git reference,
+    # without requiring wheel or fetching the Breez extra's dependencies.
+    pip_output = result.stdout + result.stderr
+    assert result.returncode == 0, pip_output
+    assert f"Resolved {repository.as_uri()} to commit {expected_commit}" in pip_output
 
 
 def test_breez_rejects_prepared_fee_above_limit_before_send() -> None:

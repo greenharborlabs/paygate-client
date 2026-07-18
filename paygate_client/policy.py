@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Callable, Literal, TypeVar
+from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
 from paygate_client.config import PolicyConfig

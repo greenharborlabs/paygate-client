@@ -28,10 +28,10 @@ To run MyPy locally, use the self-bootstrapping wrapper:
 scripts/typecheck.sh
 ```
 
-It creates an isolated repo `.venv-typecheck` using Python 3.9 (the CI
+It creates an isolated repo `.venv-typecheck` using Python 3.10 (the CI
 version) and installs or refreshes the development dependencies whenever
 `pyproject.toml` changes. Pass paths or MyPy options through to MyPy, for
-example `scripts/typecheck.sh paygate_client`. If Python 3.9 is not your default
+example `scripts/typecheck.sh paygate_client`. If Python 3.10 is not your default
 interpreter, set `PAYGATE_CLIENT_PYTHON` to its path.
 
 For guided Voltage/LND setup, run:
@@ -459,16 +459,21 @@ Breez SDK Spark can pay BOLT11 invoices without running a Lightning node. For
 Paygate, Spark preference is disabled so successful payments must return a
 Lightning preimage.
 
-Install optional Breez support:
+Until `paygate-client` is published to PyPI, install optional Breez support
+from the verified source release:
 
 ```bash
-pipx install --force "paygate-client[breez]"
+pipx install --force "paygate-client[breez] @ git+https://github.com/greenharborlabs/paygate-client.git@e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
 ```
 
 The Breez extra is required even when the base `paygate` command is already
-installed. `paygate backend doctor` loads the configured backend's local
-dependencies and exits nonzero before any invoice is created when the SDK is
-missing.
+installed. After paygate-client is published to PyPI, the equivalent command
+will be `pipx install --force "paygate-client[breez]"`. `paygate backend doctor`
+loads the configured backend's local dependencies and exits nonzero before any
+invoice is created when the SDK is missing. If it reports a missing SDK,
+reinstall the same distribution you originally installed with its `breez` extra
+enabled; it does not install dependencies, load credentials, or create a
+payment.
 
 For local wallet checks from this repository, use the wrapper script. It uses
 the repo `.venv`, installs the Breez extra there if needed, and avoids
