@@ -7,7 +7,7 @@ name = "paygate-client"
 dynamic = ["version"]
 description = "Command-line client for Paygate."
 readme = {file = "PYPI_README.md", content-type = "text/markdown"}
-requires-python = ">=3.9,<3.15"
+requires-python = ">=3.10,<3.15"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -25,7 +25,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -87,7 +86,7 @@ check = { shell = "ruff format --check . && ruff check . && mypy && pytest" }
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -96,7 +95,7 @@ select = ["E", "F", "I", "UP", "B"]
 "paygate_client/cli.py" = ["B008", "UP006", "UP035", "UP045"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 packages = ["paygate_client"]
 strict = true
 

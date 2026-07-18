@@ -182,7 +182,7 @@ def test_project_declares_release_metadata_and_breez_compatibility() -> None:
     assert project["readme"] == {"file": "PYPI_README.md", "content-type": "text/markdown"}
     assert project["license"] == "MIT"
     assert project["license-files"] == ["LICENSE"]
-    assert project["requires-python"] == ">=3.9,<3.15"
+    assert project["requires-python"] == ">=3.10,<3.15"
     assert project["authors"] == [{"name": "Green Harbor Labs", "email": "mark@greenharborlabs.com"}]
     assert project["maintainers"] == [{"name": "Green Harbor Labs", "email": "mark@greenharborlabs.com"}]
     assert project["urls"] == {
@@ -226,7 +226,7 @@ def test_clean_git_archive_builds_artifacts_with_exact_metadata(
         metadata = _artifact_metadata(artifact)
         assert metadata["Version"] == __version__ == "0.1.0"
         assert metadata["License-Expression"] == "MIT"
-        assert SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(">=3.9,<3.15")
+        assert SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(">=3.10,<3.15")
         assert metadata["Description-Content-Type"] == "text/markdown"
         assert metadata.get_payload() == expected_description
         assert "Green Harbor Labs" in metadata["Author-email"]

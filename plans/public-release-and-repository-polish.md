@@ -90,14 +90,14 @@ Correct every public or runtime surface that currently presents `paygate-client[
 
 Make `paygate_client.__version__` the single maintained version source and configure setuptools dynamic version metadata with `dynamic = ["version"]` plus `[tool.setuptools.dynamic] version = {attr = "paygate_client.__version__"}`. Set the build requirement to `setuptools>=77.0.3`, use `license = "MIT"` and `license-files = ["LICENSE"]` in `[project]`, and add author/maintainer, keywords, classifiers, source, issues, and documentation/homepage URLs.
 
-Use a dedicated `PYPI_README.md` as the immutable PyPI long description. It may describe the intended public install because it is rendered only when the artifact is published, while the GitHub README remains truthful during staging. For `v0.1.0`, declare `requires-python = ">=3.9,<3.15"` and test CPython 3.9–3.14; document Breez as tested on macOS 11+ universal2 and glibc Linux compatible with `manylinux_2_31` on x86_64/aarch64. Do not silently omit the Breez dependency through environment markers.
+Use a dedicated `PYPI_README.md` as the immutable PyPI long description. It may describe the intended public install because it is rendered only when the artifact is published, while the GitHub README remains truthful during staging. For `v0.1.0`, declare `requires-python = ">=3.10,<3.15"` and test CPython 3.10–3.14; document Breez as tested on macOS 11+ universal2 and glibc Linux compatible with `manylinux_2_31` on x86_64/aarch64. Do not silently omit the Breez dependency through environment markers.
 
 **Files:** `pyproject.toml`, `paygate_client/__init__.py`, `PYPI_README.md` (new), `tests/test_cli_smoke.py`, `tests/test_package_metadata.py` (new)
 
 **Acceptance criteria:**
 
 - `pyproject.toml` contains no literal project version and built sdist/wheel metadata resolves version `0.1.0` from `paygate_client.__version__`.
-- Wheel metadata contains the Markdown long description, `License-Expression: MIT`, license file, authors/maintainers, project URLs, classifiers, `Requires-Python: >=3.9,<3.15`, console entry point, and `Provides-Extra: breez`.
+- Wheel metadata contains the Markdown long description, `License-Expression: MIT`, license file, authors/maintainers, project URLs, classifiers, `Requires-Python: >=3.10,<3.15`, console entry point, and `Provides-Extra: breez`.
 - Source import, editable install, wheel install outside the repository, and sdist build/install all report `0.1.0`.
 - `PYPI_README.md` is concise, contains only commands valid once the artifact exists, and links to source/docs for full configuration.
 - Supported interpreter/platform claims match executable CI coverage and upstream Breez wheel availability; untested platforms are labeled unsupported or unverified.
@@ -141,7 +141,7 @@ This work unit belongs to the coordinated finding but must execute from `../payg
 
 ### W2-01: Validate once, publish exact bytes through Trusted Publishing
 
-Extend CI with a CPython 3.9–3.14 base compatibility matrix and bounded Breez resolution/import jobs on the oldest and newest supported Python versions and documented Linux/macOS platforms. Add a reusable artifact build/validation job and a dedicated publish workflow: build one sdist and one wheel from the tagged commit, run strict metadata and clean-install checks, generate a SHA-256 manifest, transfer those exact files between jobs, verify hashes after transfer, and publish those bytes through PyPI Trusted Publishing.
+Extend CI with a CPython 3.10–3.14 base compatibility matrix and bounded Breez resolution/import jobs on the oldest and newest supported Python versions (3.10 and 3.14) and documented Linux/macOS platforms. Add a reusable artifact build/validation job and a dedicated publish workflow: build one sdist and one wheel from the tagged commit, run strict metadata and clean-install checks, generate a SHA-256 manifest, transfer those exact files between jobs, verify hashes after transfer, and publish those bytes through PyPI Trusted Publishing.
 
 The publish workflow must support a guarded manual dry run where upload is structurally impossible and a production GitHub `release.published` path. Use a protected `pypi` environment and exact pending-publisher tuple (`greenharborlabs`, `paygate-client`, workflow filename, environment, project name); configure and verify that tuple after the workflow is merged to `main`. Pin third-party actions by full SHA, use no long-lived PyPI token, and omit GitHub release-asset upload to avoid `contents: write`; retain workflow artifacts, checksums, and PyPI attestations instead.
 
@@ -149,7 +149,7 @@ The publish workflow must support a guarded manual dry run where upload is struc
 
 **Acceptance criteria:**
 
-- CI tests base installs on CPython 3.9–3.14 and Breez dependency resolution/import on the documented oldest/newest supported combinations without wallet secrets or payment calls.
+- CI tests base installs on CPython 3.10–3.14 and Breez dependency resolution/import on the documented 3.10/3.14 combinations without wallet secrets or payment calls.
 - Both wheel and sdist install and pass CLI/version smoke tests outside the source tree; `twine check --strict` or equivalent passes.
 - Dry-run/manual/PR paths cannot enter the publish job or request an OIDC token.
 - Only the environment-gated publish job has `id-token: write`; ordinary jobs have read-only contents permissions.
@@ -236,7 +236,7 @@ Checkpoint D updates the client README to lead with `pipx install "paygate-clien
 - Added W1-01 to fix the currently broken README and runtime PyPI guidance before release.
 - Added a dedicated immutable `PYPI_README.md` and long-description assertions so GitHub can remain truthful while staging.
 - Selected setuptools dynamic metadata from `paygate_client.__version__` as the authoritative version mechanism.
-- Bounded the advertised `v0.1.0` contract to CPython `>=3.9,<3.15` and documented/tested Breez platforms.
+- Bounded the advertised `v0.1.0` contract to CPython `>=3.10,<3.15` and documented/tested Breez platforms.
 - Specified one artifact identity flow: build once, hash, validate, transfer, re-hash, publish exact bytes; workflow artifacts replace GitHub release assets.
 - Replaced non-executable workflow tests and meaningless dirty-checkout logic with guarded dry runs, permission checks, tag/release-target equality, full-history, main-containment, and hash tests.
 - Added exact pending-publisher setup/name preflight, explicit maintainer approvals, public verification, and forward-fix behavior.
@@ -251,7 +251,7 @@ None. The plan preserves owner decisions as explicit checkpoints rather than gue
 ### Deferred
 
 - The architect suggested six waves. This plan keeps three orchestrate-sized waves by treating first release, verification, and post-verification advertising as one operator lifecycle with four explicit non-skippable approval checkpoints; splitting those checkpoints across unattended orchestrator runs would weaken rather than strengthen the handoff.
-- The delta review asserted Breez 0.17.1 lacks CPython 3.14 wheels. Current PyPI file metadata was checked on `2026-07-16` and includes CPython 3.14 wheels for macOS universal2, manylinux 2.31 x86_64/aarch64, and Windows, so `>=3.9,<3.15` remains the evidence-backed `v0.1.0` contract and CI must prove it before release.
+- The delta review asserted Breez 0.17.1 lacks CPython 3.14 wheels. Current PyPI file metadata was checked on `2026-07-16` and includes CPython 3.14 wheels for macOS universal2, manylinux 2.31 x86_64/aarch64, and Windows, so `>=3.10,<3.15` remains the evidence-backed `v0.1.0` contract and CI must prove it before release.
 
 ## Confidence Assessment
 
