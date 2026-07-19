@@ -689,3 +689,8 @@ paygate backend pay-invoice --help
 ```
 
 See [docs/dev-setup.md](docs/dev-setup.md) for more local setup notes.
+
+The Rust cutover has a separate native qualification gate for Linux x86_64,
+Linux ARM64, macOS Intel, and macOS Apple Silicon. See
+[docs/platform-qualification.md](docs/platform-qualification.md) for the
+supported matrix, evidence contract, and dispatch procedure.

@@ -67,6 +67,29 @@ native target infrastructure is qualified before Wave 2 creates the production
 crate. Wave 2 replaces the stub manifest input with the production crate while
 preserving the same artifact, attestation, linkage, and runtime gates.
 
+## Run the qualification gate
+
+The workflow must exist on the repository's default branch before GitHub will
+accept a manual dispatch. After merging it, run the gate against the branch or
+tag being qualified:
+
+```bash
+gh workflow run rust-platform.yml \
+  --ref <branch-or-tag> \
+  -f enable_native_qualification=true
+```
+
+Find the dispatched run and wait for its final result:
+
+```bash
+gh run list --workflow rust-platform.yml --branch <branch> --limit 1
+gh run watch <run-id> --exit-status
+```
+
+A qualifying run ends with the required `Rust native platform qualification`
+job succeeding. A skipped, missing, timed-out, stale, malformed, or failed
+target is a failed qualification, even if another matrix leg succeeds.
+
 ## Repository-side verification
 
 `python3 -m pytest tests/platform-smoke` checks workflow structure, native target
