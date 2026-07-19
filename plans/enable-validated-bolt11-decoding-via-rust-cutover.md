@@ -70,7 +70,7 @@ The plan touches more than eight files because it replaces the language runtime 
 
 - Continue shipping the executable as `paygate`; preserve commands, flags, no-argument/help behavior, stdout/stderr placement, sorted JSON envelopes, exit codes, YAML paths, environment precedence, cache/ledger schemas, lock paths, and keyring identifiers.
 - Retire the Python import API without PyO3, FFI, decoder subprocess, or production sidecar.
-- Support only `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` with glibc >=2.31, plus `x86_64-apple-darwin` and `aarch64-apple-darwin` with macOS >=12.
+- Support only `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` with glibc >=2.31, plus `x86_64-apple-darwin` and `aarch64-apple-darwin` with macOS >=15.
 - A real payment accepts only immutable `ValidatedBolt11`, constructed by `str::parse::<Bolt11Invoice>()`, retaining the exact submitted string, signed millisatoshi amount, checked whole-satoshi amount, and signed 32-byte payment hash.
 - Reject amountless, fractional-satoshi, overflowing, malformed, or signature-invalid invoices before policy evaluation, ledger reservation, payer construction where practical, or wallet access.
 - Immediately before submission, shared code must prove decoded amount equals the policy-approved amount, decoded hash equals the expected challenge hash, and the exact validated string is submitted.
@@ -85,7 +85,7 @@ The plan touches more than eight files because it replaces the language runtime 
 
 ### W1-01: Provision four-target build and runtime qualification infrastructure
 
-Provision and document actual builders and runtime executors for all supported triples. Compilation alone is insufficient: the gate must execute per-target binaries on glibc 2.31 aarch64/x86_64 Linux and macOS 12 Intel/Apple Silicon, with controlled artifact transfer and no payment secrets in untrusted emulation.
+Provision and document actual builders and runtime executors for all supported triples. Compilation alone is insufficient: the gate must execute per-target binaries on glibc 2.31 aarch64/x86_64 Linux and macOS 15 Intel/Apple Silicon, with controlled artifact transfer and no payment secrets in untrusted emulation.
 
 **Files:** `.github/workflows/rust-platform.yml` (new), `.github/actions/aggregate-rust-platform/` (new), `infra/runners/` or provider configuration references (new), `docs/platform-qualification.md` (new), `tests/platform-smoke/` (new)
 
@@ -95,7 +95,7 @@ Provision and document actual builders and runtime executors for all supported t
 - Per-target artifacts move from builders to runtime executors through checksummed/provenance-bound workflow artifacts and are reverified before execution.
 - A manifest maps target triple to artifact hash, source commit, `Cargo.lock` hash, and runner identity.
 - A required aggregation job fails closed on missing, skipped, timed-out, or stale target evidence.
-- If macOS 12 or aarch64 glibc 2.31 execution cannot be secured, stop and amend the supported target matrix before implementation.
+- If macOS 15 or aarch64 glibc 2.31 execution cannot be secured, stop and amend the supported target matrix before implementation.
 
 **Error handling:** Runner unavailability, architecture mismatch, stale image, artifact/hash/provenance mismatch, secret exposure risk, or incomplete required-check aggregation blocks qualification rather than silently skipping a target.
 
@@ -143,7 +143,7 @@ Create a compileable Rust 1.88.0 crate skeleton with all cross-wave module/trait
 - The ADR records licenses, advisories, transitive git sources, feature flags, dynamic linkage, and why the supported YAML subset rejects duplicate keys, aliases/merges, custom tags, YAML 1.1 booleans, and malformed documents.
 - Breez connect/readiness/prepare/disconnect prototypes pass on all four targets without sharing wallet storage with Python.
 - Python/Rust keyring interoperability passes for service `paygate-client.credentials`, account `<namespace>:<credential_id>`, the legacy unnamespaced default fallback, and a mode-0600 file fallback.
-- Linux artifacts built in glibc 2.31 environments pass `ldd`/`readelf`; macOS builds use `MACOSX_DEPLOYMENT_TARGET=12.0`, pass `otool`, and smoke on macOS 12.
+- Linux artifacts built in glibc 2.31 environments pass `ldd`/`readelf`; macOS builds use `MACOSX_DEPLOYMENT_TARGET=15.0`, pass `otool`, and smoke on macOS 15.
 - `src/payers/base.rs` freezes signatures for `ValidatedBolt11`, `SyntheticPaymentChallenge`, the async real-payer trait, raw and verified payment results, the common verifier, cancellation semantics, and `NotSubmitted | SubmittedUnknown | Succeeded | FailedFinal` submission outcomes. `src/payers/mod.rs` freezes adapter exports and registry inputs.
 - Compile-contract tests prove Waves 2 and 3 can implement those interfaces without editing shared signatures; the stubs compile without functional implementations.
 
