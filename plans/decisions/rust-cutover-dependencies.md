@@ -2,7 +2,7 @@
 
 - Status: **accepted, contingent on the required native qualification workflow**
 - Date: 2026-07-18
-- Scope: W2-02 of `enable-validated-bolt11-decoding-via-rust-cutover.md`
+- Scope: Wave 2 of `../rust-cutover.md`
 
 ## Decision
 

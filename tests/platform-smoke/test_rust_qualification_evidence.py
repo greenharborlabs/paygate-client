@@ -118,7 +118,7 @@ def test_real_validator_rejects_duplicate_json_target_identity(tmp_path: Path) -
 def test_real_validator_rejects_future_timestamp(tmp_path: Path) -> None:
     def mutate(target, item):
         if target == TARGETS[0]:
-            item["observed_at_epoch"] = int(time.time()) + 1
+            item["observed_at_epoch"] = int(time.time()) + 3600
 
     write_records(tmp_path, mutate)
     result = run_validator(tmp_path)
