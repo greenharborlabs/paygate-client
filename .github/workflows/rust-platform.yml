@@ -42,6 +42,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.1.7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Build an immutable, attested target bundle
         env:
           TARGET: ${{ matrix.target }}
@@ -116,17 +117,31 @@ jobs:
             linux_platform: ""
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.1.7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: rust-build-${{ matrix.target }}
           path: transfer
-      - name: Reverify attested bundle and run native smoke intent
+      - name: Reverify bundle attestation
+        env:
+          TARGET: ${{ matrix.target }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bundle="transfer/runtime-bundle-${TARGET}.tar.gz"
+          test -f "$bundle"
+          command -v gh >/dev/null || { echo "Verified GitHub CLI is required for attestation verification" >&2; exit 1; }
+          gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/rust-platform.yml" \
+            --source-digest "$GITHUB_SHA" \
+            --predicate-type https://slsa.dev/provenance/v1
+      - name: Reverify bundle bindings and run native smoke
         env:
           TARGET: ${{ matrix.target }}
           LINUX_PLATFORM: ${{ matrix.linux_platform }}
           LINUX_RUNTIME_IMAGE: rust@sha256:b315f988b86912bafa7afd39a6ded0a497bf850ec36578ca9a3bdd6a14d5db4e
           STUB_ROOT: tests/platform-smoke/stub
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sha256_file() {
@@ -136,12 +151,6 @@ jobs:
           }
           bundle="transfer/runtime-bundle-${TARGET}.tar.gz"
           test -f "$bundle"
-          # `gh` is image-provisioned from GitHub's signed release and recorded in runner attestation.
-          command -v gh >/dev/null || { echo "Verified GitHub CLI is required for attestation verification" >&2; exit 1; }
-          gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/rust-platform.yml" \
-            --source-digest "$GITHUB_SHA" \
-            --predicate-type https://slsa.dev/provenance/v1
           case "$TARGET" in
             x86_64-unknown-linux-gnu)
               test "$(uname -s)" = Linux && test "$(uname -m)" = x86_64
@@ -216,8 +225,12 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-22.04
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.1.7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with:

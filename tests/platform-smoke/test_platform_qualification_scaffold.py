@@ -88,6 +88,7 @@ def test_artifacts_are_digest_and_provenance_verified_before_native_execution() 
     assert "--predicate-type https://slsa.dev/provenance/v1" in workflow
     assert "attestations: write" in workflow
     assert "attestations: read" in workflow
+    assert workflow.count("persist-credentials: false") == 3
     assert "download-artifact@" in workflow
     assert "upload-artifact@" in workflow
     assert "runtime-evidence-${{ matrix.target }}.json" in workflow
@@ -107,6 +108,10 @@ def test_artifact_and_provenance_rejection_paths_are_non_bypassable() -> None:
     verify_at = workflow.index("gh attestation verify")
     extract_at = workflow.index("tar -C verified -xzf")
     assert verify_at < extract_at
+    attestation_step = workflow[verify_at:extract_at]
+    assert "GH_TOKEN" not in attestation_step
+    runtime_step = workflow[extract_at:]
+    assert "GH_TOKEN" not in runtime_step
     assert 'test "$(uname -s)" = Linux && test "$(uname -m)" = x86_64' in workflow
     assert 'test "$(uname -s)" = Linux && test "$(uname -m)" = aarch64' in workflow
     assert 'test "$(uname -s)" = Darwin && test "$(uname -m)" = x86_64' in workflow

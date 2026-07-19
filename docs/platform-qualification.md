@@ -46,8 +46,9 @@ vendor-signed GitHub CLI to verify the bundle's GitHub attestation against this
 repository and this workflow, then re-check its SHA-256, target, source commit,
 and `Cargo.lock` hash before extracting it. The executor job has only
 `contents: read` and `attestations: read`; its ephemeral GitHub token is used
-only for the attestation lookup and is never available to untrusted/emulated
-jobs. An executor adds (without replacing the
+only in the dedicated attestation-verification step. Checkout never persists
+credentials, and the later extraction and binary-execution step has no token in
+its environment. An executor adds (without replacing the
 builder identity) `executor_runner_identity` only after native `--version` and
 `--help` intent succeeds. Evidence uses one target-specific filename per
 artifact so aggregate download cannot overwrite records. Linux intent verifies
