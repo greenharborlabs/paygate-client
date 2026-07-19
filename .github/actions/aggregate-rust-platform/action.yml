@@ -1,0 +1,102 @@
+name: Aggregate Rust platform qualification
+description: Fail closed unless fresh successful evidence exists for every native target.
+inputs:
+  evidence-directory:
+    description: Directory containing runtime evidence JSON files.
+    required: true
+  max-age-seconds:
+    description: Maximum permitted age of runtime evidence.
+    required: false
+    default: "86400"
+runs:
+  using: composite
+  steps:
+    - name: Fail closed on incomplete or stale evidence
+      shell: bash
+      env:
+        EVIDENCE_DIRECTORY: ${{ inputs.evidence-directory }}
+        MAX_AGE_SECONDS: ${{ inputs.max-age-seconds }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json
+        import os
+        import pathlib
+        import re
+        import sys
+        import time
+
+        expected = {
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+        }
+        evidence_dir = pathlib.Path(os.environ["EVIDENCE_DIRECTORY"])
+        records = {}
+        expected_paths = {
+            target: evidence_dir / f"runtime-evidence-{target}.json"
+            for target in expected
+        }
+        for target, path in expected_paths.items():
+            if not path.is_file():
+                continue
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                print(f"invalid evidence {path}: {exc}", file=sys.stderr)
+                continue
+            if not isinstance(record, dict):
+                print(f"invalid evidence {path}: expected a JSON object", file=sys.stderr)
+                continue
+            if record.get("target") != target:
+                print(f"target/file mismatch in {path}", file=sys.stderr)
+                continue
+            records[target] = record
+
+        failures = []
+        now = time.time()
+        for target in sorted(expected):
+            record = records.get(target)
+            if record is None:
+                failures.append(f"missing evidence for {target}")
+                continue
+            status = record.get("status")
+            if status == "skipped":
+                failures.append(f"skipped evidence for {target}")
+            elif status == "timed-out":
+                failures.append(f"timed-out evidence for {target}")
+            elif status != "success":
+                failures.append(f"non-success evidence for {target}: {status!r}")
+            try:
+                age = now - float(record["observed_at_epoch"])
+            except (KeyError, TypeError, ValueError):
+                failures.append(f"stale evidence for {target}: missing timestamp")
+            else:
+                if age < 0 or age > int(os.environ["MAX_AGE_SECONDS"]):
+                    failures.append(f"stale evidence for {target}: age {age:.0f}s")
+            required = {"artifact_sha256", "source_commit", "cargo_lock_sha256", "builder_runner_identity", "executor_runner_identity", "provenance"}
+            missing = required.difference(record)
+            if missing:
+                failures.append(f"missing manifest fields for {target}: {sorted(missing)}")
+                continue
+            empty = sorted(
+                field
+                for field in required
+                if not isinstance(record[field], str) or not record[field].strip()
+            )
+            if empty:
+                failures.append(f"empty manifest fields for {target}: {empty}")
+                continue
+            for field in ("artifact_sha256", "cargo_lock_sha256"):
+                if re.fullmatch(r"[0-9a-f]{64}", record[field]) is None:
+                    failures.append(f"invalid {field} for {target}")
+            if re.fullmatch(r"[0-9a-f]{40}", record["source_commit"]) is None:
+                failures.append(f"invalid source_commit for {target}")
+            if record["provenance"] != "github-attestation:slsa-v1":
+                failures.append(f"invalid provenance for {target}")
+        if failures:
+            print("Rust platform qualification failed closed:", *failures, sep="\n- ", file=sys.stderr)
+            sys.exit(1)
+        print("All native Rust platform qualification evidence is fresh and verified.")
+        PY

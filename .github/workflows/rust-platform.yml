@@ -1,0 +1,229 @@
+name: Rust native platform qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_native_qualification:
+        description: "Run after the Rust crate and Cargo.lock exist."
+        type: boolean
+        required: true
+        default: false
+
+# No release, payment, or wallet credentials are available to this workflow.
+permissions: {}
+
+jobs:
+  build:
+    name: Build provenance bundle (${{ matrix.target }})
+    if: ${{ inputs.enable_native_qualification }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            linux_platform: linux/amd64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            linux_platform: linux/arm64/v8
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            linux_platform: ""
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            linux_platform: ""
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.1.7
+        with:
+          fetch-depth: 0
+      - name: Build an immutable, attested target bundle
+        env:
+          TARGET: ${{ matrix.target }}
+          LINUX_PLATFORM: ${{ matrix.linux_platform }}
+          LINUX_BUILD_IMAGE: rust@sha256:b315f988b86912bafa7afd39a6ded0a497bf850ec36578ca9a3bdd6a14d5db4e
+          STUB_ROOT: tests/platform-smoke/stub
+        run: |
+          set -euo pipefail
+          sha256_file() {
+            if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}';
+            elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+            else echo "A SHA-256 tool is required" >&2; return 1; fi
+          }
+          test -f "$STUB_ROOT/Cargo.toml"
+          test -f "$STUB_ROOT/Cargo.lock"
+          if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
+            docker run --rm --platform "$LINUX_PLATFORM" \
+              --volume "$GITHUB_WORKSPACE:/work" --workdir /work \
+              "$LINUX_BUILD_IMAGE" \
+              cargo build --locked --release --target "$TARGET" \
+                --manifest-path "$STUB_ROOT/Cargo.toml" --target-dir target
+          else
+            export MACOSX_DEPLOYMENT_TARGET=15.0
+            rustup toolchain install 1.88.0 --profile minimal
+            cargo +1.88.0 build --locked --release --target "$TARGET" \
+              --manifest-path "$STUB_ROOT/Cargo.toml" --target-dir target
+          fi
+          mkdir -p transfer/payload
+          cp "target/$TARGET/release/paygate" transfer/payload/paygate
+          tar -C transfer/payload -czf "transfer/runtime-artifact-${TARGET}.tar.gz" .
+          artifact_sha256="$(sha256_file "transfer/runtime-artifact-${TARGET}.tar.gz")"
+          cargo_lock_sha256="$(sha256_file "$STUB_ROOT/Cargo.lock")"
+          # Values are runner-controlled identifiers without quotes/newlines by runner contract.
+          printf '{"target":"%s","artifact_sha256":"%s","source_commit":"%s","cargo_lock_sha256":"%s","builder_runner_identity":"%s"}\n' \
+            "$TARGET" "$artifact_sha256" "$GITHUB_SHA" "$cargo_lock_sha256" "$RUNNER_NAME" > transfer/qualification-manifest.json
+          tar -C transfer -czf "transfer/runtime-bundle-${TARGET}.tar.gz" \
+            "runtime-artifact-${TARGET}.tar.gz" qualification-manifest.json
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: transfer/runtime-bundle-${{ matrix.target }}.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rust-build-${{ matrix.target }}
+          path: transfer/runtime-bundle-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  qualify-runtime:
+    name: Native runtime (${{ matrix.target }})
+    needs: build
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            linux_platform: linux/amd64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            linux_platform: linux/arm64/v8
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            linux_platform: ""
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            linux_platform: ""
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.1.7
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rust-build-${{ matrix.target }}
+          path: transfer
+      - name: Reverify attested bundle and run native smoke intent
+        env:
+          TARGET: ${{ matrix.target }}
+          LINUX_PLATFORM: ${{ matrix.linux_platform }}
+          LINUX_RUNTIME_IMAGE: rust@sha256:b315f988b86912bafa7afd39a6ded0a497bf850ec36578ca9a3bdd6a14d5db4e
+          STUB_ROOT: tests/platform-smoke/stub
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha256_file() {
+            if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}';
+            elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+            else echo "A SHA-256 tool is required" >&2; return 1; fi
+          }
+          bundle="transfer/runtime-bundle-${TARGET}.tar.gz"
+          test -f "$bundle"
+          # `gh` is image-provisioned from GitHub's signed release and recorded in runner attestation.
+          command -v gh >/dev/null || { echo "Verified GitHub CLI is required for attestation verification" >&2; exit 1; }
+          gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/rust-platform.yml" \
+            --source-digest "$GITHUB_SHA" \
+            --predicate-type https://slsa.dev/provenance/v1
+          case "$TARGET" in
+            x86_64-unknown-linux-gnu)
+              test "$(uname -s)" = Linux && test "$(uname -m)" = x86_64
+              ;;
+            aarch64-unknown-linux-gnu)
+              test "$(uname -s)" = Linux && test "$(uname -m)" = aarch64
+              ;;
+            x86_64-apple-darwin)
+              test "$(uname -s)" = Darwin && test "$(uname -m)" = x86_64
+              # `uname -m` reports x86_64 under Rosetta, so reject translated execution explicitly.
+              test "$(sysctl -in sysctl.proc_translated 2>/dev/null || true)" != 1
+              ;;
+            aarch64-apple-darwin)
+              test "$(uname -s)" = Darwin && test "$(uname -m)" = arm64
+              ;;
+            *)
+              echo "unsupported target for native architecture verification: $TARGET" >&2
+              exit 1
+              ;;
+          esac
+          mkdir verified && tar -C verified -xzf "$bundle"
+          manifest=verified/qualification-manifest.json
+          artifact="verified/runtime-artifact-${TARGET}.tar.gz"
+          manifest_value() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$manifest"; }
+          test "$(manifest_value target)" = "$TARGET" || { echo "target mismatch" >&2; exit 1; }
+          test "$(manifest_value source_commit)" = "$GITHUB_SHA" || { echo "source commit mismatch" >&2; exit 1; }
+          test "$(manifest_value cargo_lock_sha256)" = "$(sha256_file "$STUB_ROOT/Cargo.lock")" || { echo "Cargo.lock mismatch" >&2; exit 1; }
+          test "$(manifest_value artifact_sha256)" = "$(sha256_file "$artifact")" || { echo "artifact digest mismatch" >&2; exit 1; }
+          test -n "$(manifest_value builder_runner_identity)" || { echo "missing builder identity" >&2; exit 1; }
+          mkdir runtime && tar -C runtime -xzf "$artifact"
+          test -x runtime/paygate
+          if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
+            docker run --rm --platform "$LINUX_PLATFORM" \
+              --volume "$GITHUB_WORKSPACE/runtime:/runtime:ro" \
+              "$LINUX_RUNTIME_IMAGE" sh -ceu '
+                test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
+                readelf --version-info /runtime/paygate | grep -Eq "Name: GLIBC_2\\."
+                ! readelf --version-info /runtime/paygate | grep -E "Name: GLIBC_2\\.(3[2-9]|[4-9][0-9])"
+                readelf --dynamic /runtime/paygate | grep -q "NEEDED.*libc\\.so\\.6"
+                /runtime/paygate --version
+                /runtime/paygate --help
+              '
+          else
+            sw_vers -productVersion | awk -F. '{exit !($1 >= 15)}'
+            minos="$(otool -l runtime/paygate | awk '$1 == "cmd" && ($2 == "LC_BUILD_VERSION" || $2 == "LC_VERSION_MIN_MACOSX") {want=1; next} want && $1 == "minos" {print $2; exit}')"
+            test -n "$minos" || { echo "missing macOS deployment target" >&2; exit 1; }
+            awk -v minos="$minos" 'BEGIN {split(minos,v,"."); exit !(v[1] <= 15)}' || { echo "macOS deployment target exceeds 15.0: $minos" >&2; exit 1; }
+            otool -L runtime/paygate | grep -q '^runtime/paygate:' || { echo "unable to inspect macOS linked libraries" >&2; exit 1; }
+            runtime/paygate --version
+            runtime/paygate --help
+          fi
+      - name: Write executor evidence
+        if: ${{ success() }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          manifest=verified/qualification-manifest.json
+          sed "s/}$/,\"status\":\"success\",\"observed_at_epoch\":\"$(date +%s)\",\"executor_runner_identity\":\"$RUNNER_NAME\",\"provenance\":\"github-attestation:slsa-v1\"}/" "$manifest" > "evidence/runtime-evidence-${TARGET}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() }}
+        with:
+          name: runtime-evidence-${{ matrix.target }}
+          path: evidence/runtime-evidence-${{ matrix.target }}.json
+          if-no-files-found: ignore
+          retention-days: 1
+
+  required-rust-platform-qualification:
+    name: Rust native platform qualification
+    needs: qualify-runtime
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.1.7
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          pattern: runtime-evidence-*
+          path: evidence
+          merge-multiple: true
+      - uses: ./.github/actions/aggregate-rust-platform
+        with:
+          evidence-directory: evidence

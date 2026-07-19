@@ -1,0 +1,52 @@
+# GitHub-hosted standard runner inventory for this public repository.
+provisioning_status: ready
+approval_required: none
+artifact_trust:
+  required: [sha256, source_commit, cargo_lock_sha256, builder_runner_identity, github_slsa_v1_attestation]
+  executor_reverification: required
+  executor_cli: "GitHub CLI preinstalled on GitHub-hosted runner images"
+runners:
+  - target: x86_64-unknown-linux-gnu
+    labels: [ubuntu-22.04]
+    os_image: "GitHub ubuntu-22.04 x64 host; pinned Rust 1.88.0 Debian bullseye OCI runtime (glibc 2.31)"
+    architecture: x86_64
+    provider: "GitHub-hosted standard runner"
+    trust_boundary: "fresh GitHub-hosted native VM plus digest-pinned OCI container; no production wallet access"
+    secret_policy: "no payment, wallet, or release secrets"
+    owner: "Platform Engineering"
+    availability_sla: "GitHub-hosted best effort; workflow timeout 30 minutes"
+    timeout_minutes: 30
+    monthly_cost_ceiling_usd: 0
+  - target: aarch64-unknown-linux-gnu
+    labels: [ubuntu-22.04-arm]
+    os_image: "GitHub ubuntu-22.04 ARM64 host; pinned Rust 1.88.0 Debian bullseye OCI runtime (glibc 2.31)"
+    architecture: aarch64
+    provider: "GitHub-hosted standard runner"
+    trust_boundary: "fresh GitHub-hosted native VM plus digest-pinned OCI container; no production wallet access"
+    secret_policy: "no payment, wallet, or release secrets"
+    owner: "Platform Engineering"
+    availability_sla: "GitHub-hosted best effort; workflow timeout 30 minutes"
+    timeout_minutes: 30
+    monthly_cost_ceiling_usd: 0
+  - target: x86_64-apple-darwin
+    labels: [macos-15-intel]
+    os_image: "GitHub macos-15-intel"
+    architecture: x86_64
+    provider: "GitHub-hosted standard runner"
+    trust_boundary: "fresh GitHub-hosted native macOS VM; no production wallet access"
+    secret_policy: "no payment, wallet, or release secrets"
+    owner: "Platform Engineering"
+    availability_sla: "GitHub-hosted best effort; workflow timeout 35 minutes"
+    timeout_minutes: 35
+    monthly_cost_ceiling_usd: 0
+  - target: aarch64-apple-darwin
+    labels: [macos-15]
+    os_image: "GitHub macos-15 Apple Silicon"
+    architecture: aarch64
+    provider: "GitHub-hosted standard runner"
+    trust_boundary: "fresh GitHub-hosted native Apple Silicon VM; no production wallet access"
+    secret_policy: "no payment, wallet, or release secrets"
+    owner: "Platform Engineering"
+    availability_sla: "GitHub-hosted best effort; workflow timeout 35 minutes"
+    timeout_minutes: 35
+    monthly_cost_ceiling_usd: 0
