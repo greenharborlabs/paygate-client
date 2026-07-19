@@ -34,9 +34,33 @@ tag-only source, new git source, or changed commit fails. The committed license
 checker parses complete SPDX expressions with AND/OR/WITH precedence and parentheses;
 unknown identifiers, exceptions, syntax, or trailing content fail closed. Three known
 legacy slash spellings are normalized explicitly. Missing metadata is accepted only
-for exact package/version/source classifications for the pinned Spark, boltz, and
-`tokio-tungstenite-wasm` artifacts. Self-tests inject AGPL, proprietary, malformed,
-unknown-exception, and unclassified missing-metadata cases.
+for the following exact `(package, version, normalized Cargo source)` identities.
+The checker rejects a name, version, source revision/index, or license change
+independently; it also rejects duplicate metadata identities, a stale allowlist
+member, and any newly unlicensed package. This is an identity allowlist, never a
+source-only, name-only, or version-range exception.
+
+| Package | Version | Normalized Cargo source | Reviewed upstream license basis |
+| --- | --- | --- | --- |
+| `boltz-client` | `0.1.0` | `git+https://github.com/breez/boltz-client?rev=809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730#809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730` | Breez boltz-client repository-level MIT; package manifest omits `license`. |
+| `breez-sdk-common` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `breez-sdk-spark` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `flashnet` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `lnurl-models` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `macros` | `0.1.0` | `git+https://github.com/breez/boltz-client?rev=809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730#809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730` | Breez boltz-client repository-level MIT; package manifest omits `license`. |
+| `macros` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `platform-utils` | `0.1.0` | `git+https://github.com/breez/boltz-client?rev=809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730#809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730` | Breez boltz-client repository-level MIT; package manifest omits `license`. |
+| `platform-utils` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `spark` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `spark-wallet` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+| `tokio-tungstenite-wasm` | `0.8.2` | `registry+https://github.com/rust-lang/crates.io-index` | Reviewed upstream crate repository is MIT; this published manifest omits `license`. |
+| `utils` | `0.1.0` | `git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa` | Spark SDK repository-level MIT; workspace package manifest omits `license`. |
+
+The table has one exact tuple per checker entry (including the same package name from
+distinct sources). Its table-driven self-tests mutate every
+allowlisted tuple's name, version, source, and license independently and require a
+full `name@version source=...` rejection diagnostic. Valid SPDX continues to pass;
+invalid or unapproved SPDX fails closed.
 
 `cargo-audit 0.21.2` runs against the committed graph with warnings denied. A new
 advisory or license/source-policy failure blocks qualification; it is not waived

@@ -6,6 +6,11 @@
 
 Replace the unpublished Python 0.1.0 package with a Rust 0.2.0 `paygate` CLI so every real payment uses `lightning-invoice`'s fully validated BOLT11 decoder. Preserve the existing command, configuration, policy, state, credential, backend, diagnostic, and error contracts while making the exact signed invoice amount and payment hash authoritative before wallet submission.
 
+Python oracle boundary: frozen Python has no cancellation timing marker. Rust
+`BeforeSubmission` and `AfterSubmissionUnknown` semantics are
+`intentional_security_delta` cases owned by W2-02, with no Python observation
+pointer; see `plans/decisions/python-oracle-transition-boundary.md`.
+
 This plan deliberately uses ten dependency barriers and 16 work units despite the normal compact-plan threshold. Native runner provisioning, compatibility/interface/dependency qualification, deterministic core porting, isolated wallet adapters, parity/security approval, release preparation, local ownership transfer, prerelease publication, external tap validation, and promotion/observation have different stop conditions; splitting them into disconnected plans would weaken the release gate and rollback chain.
 
 ## Existing Code Leverage
@@ -112,18 +117,29 @@ Both units depend on the qualified native runners and are independent and releas
 
 ### W2-01: Freeze the Python oracle and compatibility manifest
 
-Turn commit `f56cbd0` into an offline deterministic oracle and inventory every runtime, test, script, workflow, documentation, and publication behavior. Classify each corpus case as `must_match`, `intentional_security_delta`, or `unsupported_legacy_input`, including cancellation and ambiguous post-submission ledger outcomes.
+Retain the already-frozen 37-case offline deterministic oracle for commit
+`f56cbd0` and inventory every runtime, test, script, workflow, documentation,
+and publication behavior. The Python bundle is transitional legacy coverage;
+do not expand it with new adapter-negative, config-precedence,
+backend-`pay-invoice`, redaction/replay, or submission-timing evidence. Rust
+tests own those new acceptance criteria and the cancellation/security deltas;
+see `plans/decisions/python-oracle-transition-boundary.md`.
 
 **Files:** `compat/manifest.yaml` (new), `compat/python_oracle/` (new), `compat/fixtures/` (new), existing `tests/`, `scripts/`, `.github/workflows/`, and docs as read-only inputs
 
 **Acceptance criteria:**
 - Python 3.11 plus an immutable dependency lock can run the oracle offline from a clean checkout of `f56cbd0`.
 - Clock, UUID, locale, timezone, HOME/XDG directories, keyring, network, and backend responses are injected or fixture-controlled.
-- The manifest freezes CLI help/exit/output bytes, config and `voltage-env.sh` precedence, challenge parsing, error/redaction/trace behavior, credential signing, cache/ledger/keyring/permissions/locks, and reservation outcomes.
+- The manifest preserves the existing frozen CLI, config, challenge, error,
+  credential, cache, ledger, keyring, permission, locking, and reservation
+  observations without adding new Python cases.
 - Every Python script/workflow/doc is assigned `port`, `replace`, `neutral_fixture`, `rollback_only`, or `retire` with an owning later unit.
-- Two consecutive clean offline runs produce byte-identical golden outputs and manifest hashes.
+- Two consecutive clean offline runs produce byte-identical golden outputs and
+  manifest hashes; the checked-in baseline remains 37 cases.
 
-**Error handling:** Missing pins, nondeterministic output, live network/keyring access, unclassified behavior, or an unfrozen post-submission outcome is a Wave 2 failure. Do not normalize differences while recording the oracle.
+**Error handling:** Missing pins, nondeterministic output, live network/keyring
+access, or drift in the frozen baseline is a Wave 2 failure. Do not normalize
+differences or infer Rust-only behavior from Python.
 
 **Tests:** Oracle self-tests, clean-environment replay, fixture completeness, and golden-hash comparison.
 

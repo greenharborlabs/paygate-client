@@ -4,7 +4,12 @@
 
 ## Summary
 
-Repair only the six acceptance gaps found in the third Wave 2 review: make the Python oracle report only behavior the frozen baseline can expose, drive backend fixtures through public calls, make the Rust verified-payment proof unforgeable, scope every missing-license exception to an exact package/version/source tuple, and add target-bound evidence to the full Rust qualification workflow. After local acceptance passes, stop for explicit approval before commit or push; only a pushed branch may supply live four-target evidence.
+Repair the actionable Wave 2 acceptance gaps while explicitly retiring the
+exhausted W1-01 Python-oracle expansion. The Python bundle remains the coherent
+37-case frozen baseline; Rust owns all new payment-proof, adapter, submission,
+and CLI acceptance criteria. After local acceptance passes, stop for explicit
+approval before commit or push; only a pushed branch may supply live four-target
+evidence.
 
 This companion plan preserves `plans/enable-validated-bolt11-decoding-via-rust-cutover.md` and the already-passing historical-commit, 46-wheel offline-closure, deterministic-replay, dependency, interface, fallback, linkage, formatting, license, and workflow checks.
 
@@ -53,11 +58,37 @@ The Python unit spans several existing oracle artifacts because evidence, manife
 
 The four units are independent and may run in parallel. Preserve all currently passing evidence and do not touch generated `target/` output except through normal test commands.
 
-### W1-01: Reconcile and observe the frozen Python contract
+### W1-01: Retire the attempted Python-oracle expansion
 
-Drive the frozen `f56cbd0` code through deterministic backend doubles instead of copying fixture payloads into evidence. First reconcile the manifest with what that synchronous baseline can expose: record historical payer/ledger observations as historical facts, and classify explicit pre/post-submission cancellation semantics as Rust intentional security deltas owned by later Rust tests rather than fabricating Python observations. Capture actual CLI/config outputs for every remaining claim, including credentials list/purge and backend pay-invoice.
+W1-01 exhausted its permitted implementation/review cycles without producing a
+coherent manifest, replay contract, or golden evidence set. Do not continue
+repairing or expanding it. Restore and retain the last coherent 37-case
+baseline from `f56cbd0`; treat it as frozen legacy compatibility coverage and a
+rollback reference only.
 
-**Files:** `compat/python_oracle/probes.py`, `compat/python_oracle/inject/oracle_pytest.py`, `compat/python_oracle/inject/sitecustomize.py`, `compat/python_oracle/tests/test_oracle_contract.py`, `compat/fixtures/backends.json`, `compat/fixtures/controls.json`, `compat/fixtures/keyring.json`, `compat/manifest.yaml`, `compat/python_oracle/golden/evidence.json`, `compat/python_oracle/README.md`, `plans/decisions/python-oracle-transition-boundary.md` (new), `plans/enable-validated-bolt11-decoding-via-rust-cutover.md`
+The transition decision in
+`plans/decisions/python-oracle-transition-boundary.md` is authoritative: the
+synchronous Python process cannot prove submission timing or a typed
+cancellation state. Rust tests must prove `BeforeSubmission` rollback,
+`AfterSubmissionUnknown` retention, payment-proof binding, adapter negative
+cases, configuration precedence, backend `pay-invoice`, deterministic
+redaction/replay evidence, and new CLI behavior.
+
+**Files:** Restore the existing `compat/` baseline; retain the transition
+decision and frozen-oracle README. No new Python manifest cases, fixtures,
+probes, replay rules, or golden evidence are authorized.
+
+**Replacement acceptance criteria:**
+
+- The Python oracle validates and replays its existing 37-case baseline without
+  changes to historical evidence.
+- Python is not cited as evidence for Rust-only security deltas or new Rust
+  behavior.
+- Rust unit, integration, adapter, CLI, and qualification tests own all new
+  acceptance criteria listed above.
+
+The detailed criteria below are retained only as the rejected W1-01 record;
+they are not acceptance gates for this plan.
 
 **Acceptance criteria:**
 

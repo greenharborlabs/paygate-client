@@ -173,17 +173,116 @@ jobs:
             "$binary" --version
           fi
 
+      - name: Write immutable native qualification evidence
+        # This is deliberately last: a successful record is proof only that every
+        # preceding named qualification command completed successfully.
+        env:
+          TARGET: ${{ matrix.target }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256_file() {
+            if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}';
+            elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
+            else echo "SHA-256 tool unavailable" >&2; return 1; fi
+          }
+          binary="target/$TARGET/release/paygate"
+          test -x "$binary"
+          binary_sha256="$(sha256_file "$binary")"
+          cargo_lock_sha256="$(sha256_file Cargo.lock)"
+          test -n "$binary_sha256" && test -n "$cargo_lock_sha256"
+          case "$TARGET" in
+            *-unknown-linux-gnu) runtime_floor="glibc-2.31" ;;
+            *-apple-darwin) runtime_floor="macos-15.0" ;;
+            *) echo "unsupported qualification target: $TARGET" >&2; exit 1 ;;
+          esac
+          mkdir -p evidence
+          TARGET="$TARGET" BINARY_SHA256="$binary_sha256" CARGO_LOCK_SHA256="$cargo_lock_sha256" \
+            RUNTIME_FLOOR="$runtime_floor" python3 - <<'PY'
+          import json
+          import os
+          import time
+
+          # This schema intentionally carries status and identity metadata only.
+          record = {
+              "schema_version": 1,
+              "target": os.environ["TARGET"],
+              "source_commit": os.environ["GITHUB_SHA"],
+              "cargo_lock_sha256": os.environ["CARGO_LOCK_SHA256"],
+              "runner_identity": os.environ["RUNNER_NAME"],
+              "run_id": os.environ["RUN_ID"],
+              "run_attempt": os.environ["RUN_ATTEMPT"],
+              "binary_sha256": os.environ["BINARY_SHA256"],
+              "observed_platform": {
+                  "architecture": os.environ["RUNNER_ARCH"],
+                  "os": os.environ["RUNNER_OS"],
+                  "runtime_floor": os.environ["RUNTIME_FLOOR"],
+              },
+              "checks": {
+                  "breez_lifecycle": "success",
+                  "native_keyring": "success",
+                  "locked_offline_build": "success",
+                  "linkage": "success",
+                  "cli_runtime": "success",
+              },
+              "observed_at_epoch": int(time.time()),
+          }
+          with open(f"evidence/qualification-evidence-{record['target']}.json", "x", encoding="utf-8") as output:
+              json.dump(record, output, sort_keys=True, separators=(",", ":"))
+              output.write("\n")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ always() }}
+        with:
+          name: rust-qualification-evidence-${{ matrix.target }}
+          path: evidence/qualification-evidence-${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  aggregate-qualification-evidence:
+    name: Aggregate native qualification evidence
+    needs: native-qualification
+    if: ${{ always() && needs.native-qualification.result == 'success' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: rust-qualification-evidence-*
+          path: evidence
+          merge-multiple: true
+      - id: cargo-lock
+        name: Hash checked-out Cargo.lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum Cargo.lock | awk '{print "sha256=" $1}' >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/aggregate-rust-qualification
+        with:
+          evidence-directory: evidence
+          expected-source-commit: ${{ github.sha }}
+          expected-run-id: ${{ github.run_id }}
+          expected-run-attempt: ${{ github.run_attempt }}
+          expected-cargo-lock-sha256: ${{ steps.cargo-lock.outputs.sha256 }}
+
   qualification-gate:
     name: Rust qualification gate
     if: always()
-    needs: [dependency-policy, native-qualification]
+    needs: [dependency-policy, native-qualification, aggregate-qualification-evidence]
     runs-on: ubuntu-22.04
     steps:
       - name: Require every policy and native matrix leg
         env:
           POLICY_RESULT: ${{ needs.dependency-policy.result }}
           NATIVE_RESULT: ${{ needs.native-qualification.result }}
+          EVIDENCE_RESULT: ${{ needs.aggregate-qualification-evidence.result }}
         run: |
           set -euo pipefail
           test "$POLICY_RESULT" = success
           test "$NATIVE_RESULT" = success
+          test "$EVIDENCE_RESULT" = success

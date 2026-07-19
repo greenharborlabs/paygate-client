@@ -15,6 +15,12 @@ keyring backends, remote Git, and unapproved subprocesses fatal. Two fresh
 runs use deliberately different ambient HOME, XDG, locale, timezone, and clock
 inputs; their complete evidence must be byte-identical.
 
+This is a frozen legacy compatibility oracle, not an implementation target.
+Its 37-case baseline is retained as a rollback and behavioral reference until
+the Rust cutover is complete. New adapter-negative cases, configuration
+precedence cases, backend payment evidence, and submission/cancellation
+guarantees belong in Rust tests; do not expand this Python bundle.
+
 Build the pinned qualified runner (the build may access Debian package mirrors
 to install Git):
 

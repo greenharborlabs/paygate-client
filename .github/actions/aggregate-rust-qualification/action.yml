@@ -1,0 +1,137 @@
+name: Aggregate Rust qualification evidence
+description: Fail closed unless all four native qualification records are current and bound to this run.
+inputs:
+  evidence-directory:
+    description: Directory containing qualification evidence JSON files.
+    required: true
+  expected-source-commit:
+    description: Commit being qualified.
+    required: true
+  expected-run-id:
+    description: GitHub workflow run identifier.
+    required: true
+  expected-run-attempt:
+    description: GitHub workflow run attempt.
+    required: true
+  expected-cargo-lock-sha256:
+    description: SHA-256 of the Cargo.lock checked out by the aggregate job.
+    required: true
+  max-age-seconds:
+    description: Maximum permitted evidence age.
+    required: false
+    default: "86400"
+runs:
+  using: composite
+  steps:
+    - name: Validate four immutable qualification records
+      shell: bash
+      env:
+        EVIDENCE_DIRECTORY: ${{ inputs.evidence-directory }}
+        EXPECTED_SOURCE_COMMIT: ${{ inputs.expected-source-commit }}
+        EXPECTED_RUN_ID: ${{ inputs.expected-run-id }}
+        EXPECTED_RUN_ATTEMPT: ${{ inputs.expected-run-attempt }}
+        EXPECTED_CARGO_LOCK_SHA256: ${{ inputs.expected-cargo-lock-sha256 }}
+        MAX_AGE_SECONDS: ${{ inputs.max-age-seconds }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json
+        import math
+        import os
+        import pathlib
+        import re
+        import sys
+        import time
+
+        expected = {
+            "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu",
+            "x86_64-apple-darwin", "aarch64-apple-darwin",
+        }
+        fields = {
+            "schema_version", "target", "source_commit", "cargo_lock_sha256",
+            "runner_identity", "run_id", "run_attempt", "binary_sha256",
+            "observed_platform", "checks", "observed_at_epoch",
+        }
+        check_names = {"breez_lifecycle", "native_keyring", "locked_offline_build", "linkage", "cli_runtime"}
+        directory = pathlib.Path(os.environ["EVIDENCE_DIRECTORY"])
+        failures, records = [], {}
+
+        def fail(target, field):
+            failures.append(f"{target}: invalid {field}")
+
+        paths = sorted(directory.glob("*.json")) if directory.is_dir() else []
+        if len(paths) != 4:
+            failures.append(f"evidence: expected exactly 4 records, found {len(paths)}")
+        for path in paths:
+            file_target = path.name.removeprefix("qualification-evidence-").removesuffix(".json")
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                fail(file_target, "JSON")
+                continue
+            if not isinstance(record, dict):
+                fail(file_target, "schema")
+                continue
+            if file_target not in expected:
+                fail(file_target, "unexpected target")
+                continue
+            if set(record) != fields:
+                fail(file_target, "schema fields")
+                continue
+            target = record["target"]
+            if not isinstance(target, str) or target not in expected:
+                fail(file_target, "target")
+                continue
+            if target != file_target:
+                fail(file_target, "target/file mismatch")
+            if target in records:
+                fail(target, "duplicate target")
+                continue
+            records[target] = record
+            if record["schema_version"] != 1:
+                fail(target, "schema_version")
+            for field in ("source_commit", "cargo_lock_sha256", "binary_sha256"):
+                if not isinstance(record[field], str) or re.fullmatch(r"[0-9a-f]{40}" if field == "source_commit" else r"[0-9a-f]{64}", record[field]) is None:
+                    fail(target, field)
+            if record["source_commit"] != os.environ["EXPECTED_SOURCE_COMMIT"]:
+                fail(target, "source_commit")
+            if record["cargo_lock_sha256"] != os.environ["EXPECTED_CARGO_LOCK_SHA256"]:
+                fail(target, "cargo_lock_sha256")
+            for field, expected_value in (("run_id", os.environ["EXPECTED_RUN_ID"]), ("run_attempt", os.environ["EXPECTED_RUN_ATTEMPT"])):
+                if str(record[field]) != expected_value:
+                    fail(target, field)
+            if not isinstance(record["runner_identity"], str) or not record["runner_identity"].strip():
+                fail(target, "runner_identity")
+            platform = record["observed_platform"]
+            if not isinstance(platform, dict) or set(platform) != {"architecture", "os", "runtime_floor"} or not all(isinstance(value, str) and value for value in platform.values()):
+                fail(target, "observed_platform")
+            checks = record["checks"]
+            if not isinstance(checks, dict) or set(checks) != check_names:
+                fail(target, "checks")
+            elif any(checks[name] != "success" for name in check_names):
+                fail(target, "checks")
+            try:
+                observed = float(record["observed_at_epoch"])
+                age = time.time() - observed
+                if not math.isfinite(observed) or age < 0 or age > int(os.environ["MAX_AGE_SECONDS"]):
+                    raise ValueError
+            except (TypeError, ValueError):
+                fail(target, "observed_at_epoch")
+
+        for target in sorted(expected):
+            if target not in records:
+                failures.append(f"{target}: missing evidence")
+        if records:
+            commits = {record["source_commit"] for record in records.values()}
+            locks = {record["cargo_lock_sha256"] for record in records.values()}
+            if len(commits) != 1:
+                for target in sorted(records):
+                    fail(target, "mixed source_commit")
+            if len(locks) != 1:
+                for target in sorted(records):
+                    fail(target, "mixed cargo_lock_sha256")
+        if failures:
+            print("Rust qualification evidence failed closed:", *failures, sep="\n- ", file=sys.stderr)
+            sys.exit(1)
+        print("All four Rust qualification evidence records are current and bound to this run.")
+        PY

@@ -78,3 +78,13 @@ fn submission_outcomes_are_exhaustive_and_cancellation_is_explicit() {
         CancellationSemantics::AfterSubmissionUnknown
     );
 }
+
+#[test]
+fn verified_payment_result_exposes_only_read_only_accessor_contracts() {
+    let _amount_sats: fn(&VerifiedPaymentResult) -> u64 = VerifiedPaymentResult::amount_sats;
+    let _fee_sats: fn(&VerifiedPaymentResult) -> u64 = VerifiedPaymentResult::fee_sats;
+    let _payment_hash: fn(&VerifiedPaymentResult) -> &[u8; 32] =
+        VerifiedPaymentResult::payment_hash;
+    let _preimage: fn(&VerifiedPaymentResult) -> &[u8; 32] = VerifiedPaymentResult::preimage;
+    let _outcome: fn(&VerifiedPaymentResult) -> SubmissionOutcome = VerifiedPaymentResult::outcome;
+}

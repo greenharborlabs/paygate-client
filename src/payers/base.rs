@@ -69,13 +69,59 @@ pub struct RawPaymentResult {
 }
 
 /// Proof-bound payment result safe for credential construction.
+///
+/// Instances are issued only by [`verify_payment_result`], after binding backend proof material
+/// to a validated invoice. Consumers can inspect the proof through the read-only accessors, but
+/// cannot construct or alter it.
+///
+/// ```compile_fail
+/// use paygate::payers::base::{SubmissionOutcome, VerifiedPaymentResult};
+///
+/// let _forged = VerifiedPaymentResult {
+///     amount_sats: 21,
+///     fee_sats: 0,
+///     payment_hash: [0; 32],
+///     preimage: [0; 32],
+///     outcome: SubmissionOutcome::Succeeded,
+/// };
+/// ```
+///
+/// ```compile_fail
+/// use paygate::payers::base::VerifiedPaymentResult;
+///
+/// fn corrupt(result: &mut VerifiedPaymentResult) {
+///     result.amount_sats = 0;
+/// }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedPaymentResult {
-    pub amount_sats: u64,
-    pub fee_sats: u64,
-    pub payment_hash: [u8; 32],
-    pub preimage: [u8; 32],
-    pub outcome: SubmissionOutcome,
+    amount_sats: u64,
+    fee_sats: u64,
+    payment_hash: [u8; 32],
+    preimage: [u8; 32],
+    outcome: SubmissionOutcome,
+}
+
+impl VerifiedPaymentResult {
+    pub fn amount_sats(&self) -> u64 {
+        self.amount_sats
+    }
+
+    pub fn fee_sats(&self) -> u64 {
+        self.fee_sats
+    }
+
+    pub fn payment_hash(&self) -> &[u8; 32] {
+        &self.payment_hash
+    }
+
+    pub fn preimage(&self) -> &[u8; 32] {
+        &self.preimage
+    }
+
+    pub fn outcome(&self) -> SubmissionOutcome {
+        self.outcome
+    }
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -144,4 +190,26 @@ pub fn verify_payment_result(
 fn decode_32(value: &str, _field: &str) -> Result<[u8; 32], PaymentError> {
     let bytes = hex::decode(value).map_err(|_| PaymentError::InvalidInput)?;
     bytes.try_into().map_err(|_| PaymentError::InvalidInput)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_payment_result_exposes_read_only_proof_values() {
+        let result = VerifiedPaymentResult {
+            amount_sats: 21,
+            fee_sats: 1,
+            payment_hash: [2; 32],
+            preimage: [3; 32],
+            outcome: SubmissionOutcome::Succeeded,
+        };
+
+        assert_eq!(result.amount_sats(), 21);
+        assert_eq!(result.fee_sats(), 1);
+        assert_eq!(result.payment_hash(), &[2; 32]);
+        assert_eq!(result.preimage(), &[3; 32]);
+        assert_eq!(result.outcome(), SubmissionOutcome::Succeeded);
+    }
 }

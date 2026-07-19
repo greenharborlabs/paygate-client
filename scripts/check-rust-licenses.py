@@ -19,14 +19,28 @@ LEGACY_NORMALIZATIONS = {
 }
 SPARK_SOURCE = "git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa"
 BOLTZ_SOURCE = "git+https://github.com/breez/boltz-client?rev=809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730#809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730"
-MISSING_CLASSIFICATIONS = {
-    SPARK_SOURCE: {
-        "breez-sdk-common", "breez-sdk-spark", "flashnet", "lnurl-models", "macros",
-        "platform-utils", "spark", "spark-wallet", "utils",
-    },
-    BOLTZ_SOURCE: {"boltz-client", "macros", "platform-utils"},
-    "registry+https://github.com/rust-lang/crates.io-index": {"tokio-tungstenite-wasm"},
-}
+CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
+
+# Each entry is a Cargo metadata identity: (package name, exact version, canonical
+# Cargo source). Do not replace this with source/name matching or version ranges.
+MISSING_LICENSE_EXCEPTIONS = (
+    ("boltz-client", "0.1.0", BOLTZ_SOURCE),
+    ("breez-sdk-common", "0.1.0", SPARK_SOURCE),
+    ("breez-sdk-spark", "0.1.0", SPARK_SOURCE),
+    ("flashnet", "0.1.0", SPARK_SOURCE),
+    ("lnurl-models", "0.1.0", SPARK_SOURCE),
+    ("macros", "0.1.0", BOLTZ_SOURCE),
+    ("macros", "0.1.0", SPARK_SOURCE),
+    ("platform-utils", "0.1.0", BOLTZ_SOURCE),
+    ("platform-utils", "0.1.0", SPARK_SOURCE),
+    ("spark", "0.1.0", SPARK_SOURCE),
+    ("spark-wallet", "0.1.0", SPARK_SOURCE),
+    ("tokio-tungstenite-wasm", "0.8.2", CRATES_IO_SOURCE),
+    ("utils", "0.1.0", SPARK_SOURCE),
+)
+MISSING_LICENSE_EXCEPTION_SET = frozenset(MISSING_LICENSE_EXCEPTIONS)
+if len(MISSING_LICENSE_EXCEPTION_SET) != len(MISSING_LICENSE_EXCEPTIONS):
+    raise RuntimeError("duplicate missing-license exception identity")
 TOKEN = re.compile(r"\s*(\(|\)|AND\b|OR\b|WITH\b|[A-Za-z0-9][A-Za-z0-9.+-]*)")
 
 
@@ -89,27 +103,63 @@ class Parser:
             raise ValueError("unbalanced SPDX expression")
 
 
-def check_package(package: dict[str, object]) -> None:
+def package_identity(package: dict[str, object]) -> tuple[object, object, object]:
+    return package.get("name"), package.get("version"), package.get("source")
+
+
+def format_identity(identity: tuple[object, object, object]) -> str:
+    name, version, source = identity
+    return f"{name}@{version} source={source}"
+
+
+def check_package(package: dict[str, object]) -> tuple[str, str, str] | None:
+    identity = package_identity(package)
     license_expression = package.get("license")
-    if isinstance(license_expression, str) and license_expression:
+    if "license" not in package or license_expression is None:
+        name, version, source = identity
+        if not all(isinstance(component, str) for component in identity):
+            raise ValueError(f"unclassified missing license metadata: {format_identity(identity)}")
+        typed_identity = (name, version, source)
+        if typed_identity not in MISSING_LICENSE_EXCEPTION_SET:
+            raise ValueError(f"unclassified missing license metadata: {format_identity(identity)}")
+        return typed_identity
+    if not isinstance(license_expression, str) or not license_expression.strip():
+        raise ValueError(f"invalid license metadata: {format_identity(identity)}")
+    try:
         Parser(license_expression).parse()
-        return
-    name = package.get("name")
-    version = package.get("version")
-    source = package.get("source")
-    allowed_names = MISSING_CLASSIFICATIONS.get(source) if isinstance(source, str) else None
-    if not isinstance(name, str) or version not in {"0.1.0", "0.8.2"} or not allowed_names or name not in allowed_names:
-        raise ValueError(f"unclassified missing license metadata: {name}@{version}")
+    except ValueError as error:
+        raise ValueError(f"unclassified license metadata: {format_identity(identity)}: {error}") from error
+    return None
 
 
 def check_metadata(path: str) -> None:
     packages = json.load(open(path, encoding="utf-8")).get("packages")
     if not isinstance(packages, list):
         raise ValueError("invalid cargo metadata")
+    observed_missing: list[tuple[str, str, str]] = []
     for package in packages:
         if not isinstance(package, dict):
             raise ValueError("invalid cargo package metadata")
-        check_package(package)
+        identity = check_package(package)
+        if identity is not None:
+            observed_missing.append(identity)
+    check_missing_license_completeness(observed_missing)
+
+
+def check_missing_license_completeness(observed_missing: list[tuple[str, str, str]]) -> None:
+    observed_set = frozenset(observed_missing)
+    if len(observed_set) != len(observed_missing):
+        duplicates = sorted(identity for identity in observed_set if observed_missing.count(identity) > 1)
+        raise ValueError("duplicate missing-license metadata identities: " + "; ".join(map(format_identity, duplicates)))
+    if observed_set != MISSING_LICENSE_EXCEPTION_SET:
+        missing = sorted(MISSING_LICENSE_EXCEPTION_SET - observed_set)
+        stale = sorted(observed_set - MISSING_LICENSE_EXCEPTION_SET)
+        details = []
+        if missing:
+            details.append("allowlist identities absent from metadata: " + "; ".join(map(format_identity, missing)))
+        if stale:
+            details.append("new unlicensed metadata identities: " + "; ".join(map(format_identity, stale)))
+        raise ValueError("missing-license allowlist completeness failure: " + " | ".join(details))
 
 
 def self_test() -> None:
@@ -125,13 +175,59 @@ def self_test() -> None:
             pass
         else:
             raise AssertionError(f"unsafe expression accepted: {expression}")
-    check_package({"name": "breez-sdk-spark", "version": "0.1.0", "source": SPARK_SOURCE, "license": None})
+    for identity in MISSING_LICENSE_EXCEPTIONS:
+        name, version, source = identity
+        package: dict[str, object] = {"name": name, "version": version, "source": source, "license": None}
+        if check_package(package) != identity:
+            raise AssertionError(f"allowlisted identity rejected: {format_identity(identity)}")
+        if check_package({key: value for key, value in package.items() if key != "license"}) != identity:
+            raise AssertionError(f"allowlisted absent license rejected: {format_identity(identity)}")
+        for field, mutated in (("name", name + "-mutated"), ("version", version + ".1"),
+                               ("source", source + "-mutated")):
+            changed = package | {field: mutated}
+            try:
+                check_package(changed)
+            except ValueError as error:
+                diagnostic = str(error)
+                for component in (changed["name"], changed["version"], changed["source"]):
+                    if str(component) not in diagnostic:
+                        raise AssertionError(f"incomplete identity diagnostic: {diagnostic}")
+            else:
+                raise AssertionError(f"{field} drift accepted: {format_identity(identity)}")
+        try:
+            check_package(package | {"license": "MIT OR"})
+        except ValueError as error:
+            if format_identity(identity) not in str(error):
+                raise AssertionError(f"license diagnostic omitted identity: {error}")
+        else:
+            raise AssertionError(f"unparsable SPDX accepted: {format_identity(identity)}")
+        for malformed_license in (123, [], "", "   "):
+            try:
+                check_package(package | {"license": malformed_license})
+            except ValueError as error:
+                if format_identity(identity) not in str(error):
+                    raise AssertionError(f"malformed license diagnostic omitted identity: {error}")
+            else:
+                raise AssertionError(f"malformed license accepted: {format_identity(identity)}")
+    metadata_identities = [
+        check_package({"name": name, "version": version, "source": source, "license": None})
+        for name, version, source in MISSING_LICENSE_EXCEPTIONS
+    ]
+    check_missing_license_completeness(metadata_identities)
     try:
-        check_package({"name": "surprise", "version": "0.1.0", "source": SPARK_SOURCE, "license": None})
-    except ValueError:
-        pass
+        check_missing_license_completeness(metadata_identities[:-1])
+    except ValueError as error:
+        if "allowlist identities absent from metadata" not in str(error):
+            raise AssertionError(f"missing allowlist member was not diagnosed: {error}")
     else:
-        raise AssertionError("unknown missing-license package accepted")
+        raise AssertionError("stale allowlist accepted")
+    try:
+        check_missing_license_completeness(metadata_identities + [metadata_identities[0]])
+    except ValueError as error:
+        if "duplicate missing-license metadata identities" not in str(error):
+            raise AssertionError(f"duplicate identity was not diagnosed: {error}")
+    else:
+        raise AssertionError("duplicate metadata identity accepted")
 
 
 if __name__ == "__main__":
