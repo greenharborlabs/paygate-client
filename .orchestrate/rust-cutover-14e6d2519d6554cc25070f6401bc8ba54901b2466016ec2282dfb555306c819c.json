@@ -1,0 +1,24 @@
+{
+  "plan_path": "plans/rust-cutover.md",
+  "plan_hash": "14e6d2519d6554cc25070f6401bc8ba54901b2466016ec2282dfb555306c819c",
+  "start_commit": "9e05106c77a57d745685013c1e1e56edf619ebab",
+  "tasks": {
+    "W2-01": "completed",
+    "W2-02": "completed"
+  },
+  "blocked_reasons": {},
+  "gates": {
+    "final_verification": "completed",
+    "specialist_review": "completed"
+  },
+  "touched_tests": [
+    "tests/platform-smoke/test_rust_development_gate.py"
+  ],
+  "contract_registry": [],
+  "agent_suite": {
+    "coder": "generic Rust/Python coder",
+    "reviewer": "generic Rust/Python reviewer",
+    "architect": "generic architect"
+  },
+  "test_cmd": "Wave 2 documented development gate plus python3 tests/platform-smoke/test_rust_development_gate.py"
+}

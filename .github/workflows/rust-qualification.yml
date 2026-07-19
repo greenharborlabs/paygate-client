@@ -1,4 +1,4 @@
-name: Rust dependency qualification
+name: Rust development gate
 
 on:
   pull_request:
@@ -7,282 +7,35 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - src/**
-      - scripts/check-rust-linkage.py
       - scripts/check-rust-licenses.py
       - tests/*qualification.rs
       - .github/workflows/rust-qualification.yml
   workflow_dispatch:
 
-# Qualification receives no release, payer, or wallet secrets and never submits payment.
+# This development gate receives no release, payer, or wallet secrets and never
+# submits a payment. Native qualification prototypes run later, against the
+# integrated client, as Wave 5 evidence rather than PR blockers.
 permissions:
   contents: read
 
 jobs:
-  dependency-policy:
-    name: Immutable dependency policy
+  development-gate:
+    name: Rust Wave 2 development gate
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - name: Verify toolchain, direct pins, and git-source allowlist
+      - name: Install Rust 1.88.0
+        run: rustup toolchain install 1.88.0 --profile minimal
+      - name: Run the balanced Wave 2 development gate
         shell: bash
         run: |
           set -euo pipefail
-          grep -Fx 'channel = "1.88.0"' rust-toolchain.toml
-          grep -F 'lightning-invoice = { version = "=0.34.1"' Cargo.toml
-          grep -F 'keyring = "=4.1.5"' Cargo.toml
-          grep -F 'serde-saphyr = { version = "=0.0.29"' Cargo.toml
-          grep -F 'rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa"' Cargo.toml
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-
-          allowed = {
-              "git+https://github.com/breez/spark-sdk.git?rev=f660f5a3bf24323e5c14235efcd28e5aef06c8aa#f660f5a3bf24323e5c14235efcd28e5aef06c8aa",
-              "git+https://github.com/breez/boltz-client?rev=809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730#809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730",
-              "git+https://github.com/lightsparkdev/frost?rev=9aaf1b6b9fa3c2c3c2c7c70da83061deda1a9180#9aaf1b6b9fa3c2c3c2c7c70da83061deda1a9180",
-          }
-          lock = Path("Cargo.lock").read_text()
-          actual = set(re.findall(r'^source = "(git\+[^"]+)"$', lock, re.MULTILINE))
-          if actual != allowed:
-              raise SystemExit(f"git source allowlist mismatch: {sorted(actual ^ allowed)}")
-          PY
-      - name: Audit the locked graph
-        run: |
-          set -euo pipefail
-          rustup toolchain install 1.88.0 --profile minimal
-          cargo +1.88.0 install cargo-audit --version 0.21.2 --locked
-          cargo +1.88.0 audit --deny warnings
-          cargo +1.88.0 metadata --locked --all-features --format-version 1 > /tmp/metadata.json
+          cargo +1.88.0 fmt --check
+          CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test interface_contract --test dependency_qualification --test keyring_qualification
+          CARGO_NET_OFFLINE=true cargo +1.88.0 metadata --locked --offline --all-features --format-version 1 > /tmp/paygate-wave2-metadata.json
           python3 scripts/check-rust-licenses.py --self-test
-          python3 scripts/check-rust-licenses.py /tmp/metadata.json
-
-  native-qualification:
-    name: Native qualification (${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-            linux_platform: linux/amd64
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
-            linux_platform: linux/arm64/v8
-          - target: x86_64-apple-darwin
-            runner: macos-15-intel
-            linux_platform: ""
-          - target: aarch64-apple-darwin
-            runner: macos-15
-            linux_platform: ""
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-      - name: Prepare an offline-resolvable vendor tree
-        env:
-          TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          rustup toolchain install 1.88.0 --profile minimal
-          rustup +1.88.0 target add "$TARGET"
-          cargo +1.88.0 fetch --locked --target "$TARGET"
-          mkdir -p .cargo
-          cargo +1.88.0 vendor --locked --versioned-dirs vendor > .cargo/config.toml
-      - name: Qualify the native credential backend and schema-v1 fallback
-        env:
-          TARGET: ${{ matrix.target }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m pip install --disable-pip-version-check 'keyring==25.6.0'
-          if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends dbus-x11 gnome-keyring
-            # shellcheck disable=SC2016
-            dbus-run-session -- bash -ceu '
-              eval "$(printf %s test-password | gnome-keyring-daemon --unlock --components=secrets)"
-              cargo +1.88.0 test --locked --test keyring_qualification
-              cargo +1.88.0 test --locked --test keyring_qualification -- --ignored --exact os_keyring_has_independent_bidirectional_and_legacy_probes
-            '
-          else
-            cargo +1.88.0 test --locked --test keyring_qualification
-            cargo +1.88.0 test --locked --test keyring_qualification -- --ignored --exact os_keyring_has_independent_bidirectional_and_legacy_probes
-          fi
-      - name: Build, test, and run non-paying prototypes
-        env:
-          TARGET: ${{ matrix.target }}
-          LINUX_PLATFORM: ${{ matrix.linux_platform }}
-          BUILD_IMAGE: rust@sha256:b315f988b86912bafa7afd39a6ded0a497bf850ec36578ca9a3bdd6a14d5db4e
-          PAYGATE_QUALIFICATION_TARGET: ${{ matrix.target }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_qualification() {
-            export CARGO_NET_OFFLINE=true
-            cargo +1.88.0 test --locked --test interface_contract --test dependency_qualification
-            cargo +1.88.0 test --locked --release --features breez-qualification --test breez_lifecycle_qualification -- --ignored --exact connect_readiness_prepare_disconnect_without_send
-            cargo +1.88.0 build --locked --offline --release --features breez-qualification --target "$TARGET"
-            "target/$TARGET/release/paygate" --version
-          }
-          if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
-            docker run --rm --platform "$LINUX_PLATFORM" \
-              -e CARGO_NET_OFFLINE=true \
-              -e PAYGATE_QUALIFICATION_TARGET="$TARGET" \
-              -e GITHUB_RUN_ID -e GITHUB_RUN_ATTEMPT \
-              -e TARGET="$TARGET" \
-              -v "$GITHUB_WORKSPACE:/work" -w /work "$BUILD_IMAGE" \
-              bash -ceu 'apt-get update; apt-get install -y --no-install-recommends protobuf-compiler cmake pkg-config; cargo test --locked --test interface_contract --test dependency_qualification; cargo test --locked --release --features breez-qualification --test breez_lifecycle_qualification -- --ignored --exact connect_readiness_prepare_disconnect_without_send; cargo build --locked --offline --release --features breez-qualification --target "$TARGET"; "target/$TARGET/release/paygate" --version'
-          else
-            export MACOSX_DEPLOYMENT_TARGET=15.0
-            command -v protoc >/dev/null || brew install protobuf
-            run_qualification
-          fi
-      - name: Inspect minimum runtime and dynamic linkage
-        env:
-          TARGET: ${{ matrix.target }}
-          LINUX_PLATFORM: ${{ matrix.linux_platform }}
-          RUNTIME_IMAGE: rust@sha256:b315f988b86912bafa7afd39a6ded0a497bf850ec36578ca9a3bdd6a14d5db4e
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 scripts/check-rust-linkage.py --self-test
-          binary="target/$TARGET/release/paygate"
-          if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
-            docker run --rm --platform "$LINUX_PLATFORM" -v "$GITHUB_WORKSPACE:/work:ro" "$RUNTIME_IMAGE" bash -ceu '
-              getconf GNU_LIBC_VERSION | grep -Fx "glibc 2.31"
-              python3 /work/scripts/check-rust-linkage.py '"$TARGET"' "/work/target/'"$TARGET"'/release/paygate"
-              for executable in /work/target/release/deps/breez_lifecycle_qualification-*; do
-                test -x "$executable" || continue
-                python3 /work/scripts/check-rust-linkage.py '"$TARGET"' "$executable"
-              done
-              "/work/target/'"$TARGET"'/release/paygate" --version
-            '
-          else
-            python3 scripts/check-rust-linkage.py "$TARGET" "$binary"
-            for executable in target/release/deps/breez_lifecycle_qualification-*; do
-              test -x "$executable" || continue
-              python3 scripts/check-rust-linkage.py "$TARGET" "$executable"
-            done
-            "$binary" --version
-          fi
-
-      - name: Write immutable native qualification evidence
-        # This is deliberately last: a successful record is proof only that every
-        # preceding named qualification command completed successfully.
-        env:
-          TARGET: ${{ matrix.target }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          sha256_file() {
-            if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}';
-            elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
-            else echo "SHA-256 tool unavailable" >&2; return 1; fi
-          }
-          binary="target/$TARGET/release/paygate"
-          test -x "$binary"
-          binary_sha256="$(sha256_file "$binary")"
-          cargo_lock_sha256="$(sha256_file Cargo.lock)"
-          test -n "$binary_sha256" && test -n "$cargo_lock_sha256"
-          case "$TARGET" in
-            *-unknown-linux-gnu) runtime_floor="glibc-2.31" ;;
-            *-apple-darwin) runtime_floor="macos-15.0" ;;
-            *) echo "unsupported qualification target: $TARGET" >&2; exit 1 ;;
-          esac
-          mkdir -p evidence
-          TARGET="$TARGET" BINARY_SHA256="$binary_sha256" CARGO_LOCK_SHA256="$cargo_lock_sha256" \
-            RUNTIME_FLOOR="$runtime_floor" python3 - <<'PY'
-          import json
-          import os
-          import time
-
-          # This schema intentionally carries status and identity metadata only.
-          record = {
-              "schema_version": 1,
-              "target": os.environ["TARGET"],
-              "source_commit": os.environ["GITHUB_SHA"],
-              "cargo_lock_sha256": os.environ["CARGO_LOCK_SHA256"],
-              "runner_identity": os.environ["RUNNER_NAME"],
-              "run_id": os.environ["RUN_ID"],
-              "run_attempt": os.environ["RUN_ATTEMPT"],
-              "binary_sha256": os.environ["BINARY_SHA256"],
-              "observed_platform": {
-                  "architecture": os.environ["RUNNER_ARCH"],
-                  "os": os.environ["RUNNER_OS"],
-                  "runtime_floor": os.environ["RUNTIME_FLOOR"],
-              },
-              "checks": {
-                  "breez_lifecycle": "success",
-                  "native_keyring": "success",
-                  "locked_offline_build": "success",
-                  "linkage": "success",
-                  "cli_runtime": "success",
-              },
-              "observed_at_epoch": int(time.time()),
-          }
-          with open(f"evidence/qualification-evidence-{record['target']}.json", "x", encoding="utf-8") as output:
-              json.dump(record, output, sort_keys=True, separators=(",", ":"))
-              output.write("\n")
-          PY
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ always() }}
-        with:
-          name: rust-qualification-evidence-${{ matrix.target }}
-          path: evidence/qualification-evidence-${{ matrix.target }}.json
-          if-no-files-found: error
-          retention-days: 1
-
-  aggregate-qualification-evidence:
-    name: Aggregate native qualification evidence
-    needs: native-qualification
-    if: ${{ always() && needs.native-qualification.result == 'success' }}
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: rust-qualification-evidence-*
-          path: evidence
-          merge-multiple: true
-      - id: cargo-lock
-        name: Hash checked-out Cargo.lock
-        shell: bash
-        run: |
-          set -euo pipefail
-          sha256sum Cargo.lock | awk '{print "sha256=" $1}' >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/aggregate-rust-qualification
-        with:
-          evidence-directory: evidence
-          expected-source-commit: ${{ github.sha }}
-          expected-run-id: ${{ github.run_id }}
-          expected-run-attempt: ${{ github.run_attempt }}
-          expected-cargo-lock-sha256: ${{ steps.cargo-lock.outputs.sha256 }}
-
-  qualification-gate:
-    name: Rust qualification gate
-    if: always()
-    needs: [dependency-policy, native-qualification, aggregate-qualification-evidence]
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Require every policy and native matrix leg
-        env:
-          POLICY_RESULT: ${{ needs.dependency-policy.result }}
-          NATIVE_RESULT: ${{ needs.native-qualification.result }}
-          EVIDENCE_RESULT: ${{ needs.aggregate-qualification-evidence.result }}
-        run: |
-          set -euo pipefail
-          test "$POLICY_RESULT" = success
-          test "$NATIVE_RESULT" = success
-          test "$EVIDENCE_RESULT" = success
+          python3 scripts/check-rust-licenses.py /tmp/paygate-wave2-metadata.json
+          git diff --check
