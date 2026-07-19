@@ -20,6 +20,7 @@ runs:
         set -euo pipefail
         python3 - <<'PY'
         import json
+        import math
         import os
         import pathlib
         import re
@@ -69,7 +70,10 @@ runs:
             elif status != "success":
                 failures.append(f"non-success evidence for {target}: {status!r}")
             try:
-                age = now - float(record["observed_at_epoch"])
+                observed_at = float(record["observed_at_epoch"])
+                if not math.isfinite(observed_at):
+                    raise ValueError("timestamp must be finite")
+                age = now - observed_at
             except (KeyError, TypeError, ValueError):
                 failures.append(f"stale evidence for {target}: missing timestamp")
             else:

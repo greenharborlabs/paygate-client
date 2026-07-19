@@ -173,6 +173,8 @@ def test_embedded_aggregate_executes_all_failure_injections(tmp_path: Path) -> N
         ("stale", {"observed_at_epoch": now - 86401}),
         ("future", {"observed_at_epoch": now + 1}),
         ("invalid-timestamp", {"observed_at_epoch": "not-a-time"}),
+        ("nan-timestamp", {"observed_at_epoch": "NaN"}),
+        ("infinite-timestamp", {"observed_at_epoch": "Infinity"}),
         ("wrong-target", {"target": TARGETS[0]}),
         ("missing-artifact-digest", {"artifact_sha256": ""}),
         ("invalid-artifact-digest", {"artifact_sha256": "z" * 64}),
