@@ -1,0 +1,380 @@
+{
+  "baseline_commit": "f56cbd0c4bdf07254282a52e51bcf88ff1f48478",
+  "tree": [
+    {
+      "blob": "aee878af6dcbea50424921384a5c390ef0875e5e",
+      "mode": "100644",
+      "path": ".github/workflows/ci.yml"
+    },
+    {
+      "blob": "c3feee08cf6796845d12eb04cc1bce93e3fc455c",
+      "mode": "100644",
+      "path": ".github/workflows/publish.yml"
+    },
+    {
+      "blob": "8d9d57414fa23310d6be7f11ae11eab0db664f74",
+      "mode": "100644",
+      "path": ".gitignore"
+    },
+    {
+      "blob": "7a73a41bfdf76d6f793007240d80983a52f15f97",
+      "mode": "100644",
+      "path": ".vscode/settings.json"
+    },
+    {
+      "blob": "42afe994efeb80ab9c0fa2176ac7da48abd73308",
+      "mode": "100644",
+      "path": "LICENSE"
+    },
+    {
+      "blob": "ff0b1d7035cdf3e10c09a0c8fe68afbb9c05c15d",
+      "mode": "100644",
+      "path": "PYPI_README.md"
+    },
+    {
+      "blob": "1e39155b443f393f18de996d6f8549d8bf256b62",
+      "mode": "100644",
+      "path": "README.md"
+    },
+    {
+      "blob": "d666ba3ccb1d31c00ce5bd38715add4ab7f8480f",
+      "mode": "100644",
+      "path": "docs/dev-setup.md"
+    },
+    {
+      "blob": "a0427fff1e37638308c226b489376eba14f07d20",
+      "mode": "100644",
+      "path": "docs/payer-backend-compatibility.md"
+    },
+    {
+      "blob": "337bc597b8688dd7feed08d5b739115cd0de8a83",
+      "mode": "100644",
+      "path": "docs/phoenixd-spike.md"
+    },
+    {
+      "blob": "010c54f5a66a5460c2e127aa2d9232a8f485a8a4",
+      "mode": "100644",
+      "path": "docs/releasing.md"
+    },
+    {
+      "blob": "90860809b17712903afdb33749bb929d011f1c52",
+      "mode": "100644",
+      "path": "examples/paygate-client.yaml"
+    },
+    {
+      "blob": "fef5f7f5689f1ed38228d6bf68d91ff4f88fd80c",
+      "mode": "100644",
+      "path": "paygate_client/__init__.py"
+    },
+    {
+      "blob": "3c6d743b59978a58560d85f5c030bb46e3cdd0a9",
+      "mode": "100644",
+      "path": "paygate_client/challenges.py"
+    },
+    {
+      "blob": "f38138dd4057aa0b5d16c4fb4bad888234fefecf",
+      "mode": "100644",
+      "path": "paygate_client/cli.py"
+    },
+    {
+      "blob": "b3c7f27bd1aa0c2d8f8c70b7a26befea5633348f",
+      "mode": "100644",
+      "path": "paygate_client/config.py"
+    },
+    {
+      "blob": "757ef7648f02af8a99d5525d360eb79c5c591d4a",
+      "mode": "100644",
+      "path": "paygate_client/credentials.py"
+    },
+    {
+      "blob": "084cd3a269628ca76b411713b9ab6c97f1df9d73",
+      "mode": "100644",
+      "path": "paygate_client/diagnostics.py"
+    },
+    {
+      "blob": "6564e67f1f4219e85022b592275e7f2965ce9a28",
+      "mode": "100644",
+      "path": "paygate_client/http.py"
+    },
+    {
+      "blob": "f65866c4c572e2fb6dec7a0ac691a3fdbbdf926f",
+      "mode": "100644",
+      "path": "paygate_client/invoices.py"
+    },
+    {
+      "blob": "e3b3a344d5412dc83d00b7fcf84ffca369307e72",
+      "mode": "100644",
+      "path": "paygate_client/ledger.py"
+    },
+    {
+      "blob": "27c51225eb36951b75d36262bef092785dad9329",
+      "mode": "100644",
+      "path": "paygate_client/orchestrator.py"
+    },
+    {
+      "blob": "8dc052c6334bdeaa84d1040406b3dafe957cb219",
+      "mode": "100644",
+      "path": "paygate_client/payers/__init__.py"
+    },
+    {
+      "blob": "1766197a5357f6514797831581d1916ca5eee8a3",
+      "mode": "100644",
+      "path": "paygate_client/payers/base.py"
+    },
+    {
+      "blob": "a56525d891e269134dc0be0c06b0ab8c7be7a4c6",
+      "mode": "100644",
+      "path": "paygate_client/payers/breez.py"
+    },
+    {
+      "blob": "01ae0f35b338204e47759d9963d8132892b0da45",
+      "mode": "100644",
+      "path": "paygate_client/payers/lnd_rest.py"
+    },
+    {
+      "blob": "3c6555e63d3803cf20fb9b4b1d9f5ea293869d0a",
+      "mode": "100644",
+      "path": "paygate_client/payers/phoenixd.py"
+    },
+    {
+      "blob": "327b9fdbc946f303a12566e9fa9807d72023c11f",
+      "mode": "100644",
+      "path": "paygate_client/payers/test_mode.py"
+    },
+    {
+      "blob": "2308183415a4a7abaf7847784918435f454630ae",
+      "mode": "100644",
+      "path": "paygate_client/policy.py"
+    },
+    {
+      "blob": "6e44fc3d8229cbc38f815a6d5c8dc963f9593b05",
+      "mode": "100644",
+      "path": "paygate_client/redaction.py"
+    },
+    {
+      "blob": "33d56de6947c3fee92143689c04ecae88c9526fb",
+      "mode": "100644",
+      "path": "paygate_client/session_cache.py"
+    },
+    {
+      "blob": "b964cd3ddb519272104cd475632a59575cd7f279",
+      "mode": "100644",
+      "path": "paygate_client/trace.py"
+    },
+    {
+      "blob": "0215adef74ed53b40b012ffbdd0d65497137df8b",
+      "mode": "100644",
+      "path": "plans/bind-validated-bolt11-amount-and-payment-hash-to-every-policy-approved-payment-before-wallet-submission.md"
+    },
+    {
+      "blob": "6e28c4f1ca508d220a55ec06500d9ff780001dd2",
+      "mode": "100644",
+      "path": "plans/breez-spark-payer-backend.md"
+    },
+    {
+      "blob": "ee522eca4793ac1fcb8fc56422b3f6e5cf47cf9d",
+      "mode": "100644",
+      "path": "plans/breez-spark-paygate-findings.md"
+    },
+    {
+      "blob": "8fe361e7f1fbcc7a5398088d8e2d1404ac038e1f",
+      "mode": "100644",
+      "path": "plans/initial-plan.md"
+    },
+    {
+      "blob": "51bc815b29e10ad3c304625d1ce9245854b9afae",
+      "mode": "100644",
+      "path": "plans/paygate-client-v1.md"
+    },
+    {
+      "blob": "39494657b823eafc7d40bf9e62e0c05f65691a05",
+      "mode": "100644",
+      "path": "plans/public-release-and-repository-polish.md"
+    },
+    {
+      "blob": "5e32160d7d71186c1fae7ae37cf18c37586baf16",
+      "mode": "100644",
+      "path": "plans/security-review-remediation.md"
+    },
+    {
+      "blob": "5bc743fcac196e71574a7d0796d4f4582c9a8be7",
+      "mode": "100644",
+      "path": "plans/voltage-node-setup.md"
+    },
+    {
+      "blob": "ea827e4e52718cb9d62e3c20e2f3cb5b5e86bf50",
+      "mode": "100644",
+      "path": "plans/voltage-payer-node/v1-plan.md"
+    },
+    {
+      "blob": "e364575b7a3942ead8c8cb60472764cb7c882dea",
+      "mode": "100644",
+      "path": "pyproject.toml"
+    },
+    {
+      "blob": "21334d5102dbd8fc0d0376abf3e0c28f32b5e053",
+      "mode": "100644",
+      "path": "reports/greenharbor-code-review-full-2026-07-17.md"
+    },
+    {
+      "blob": "21eb80822a31080bc81e15efcde2d21fb5352dae",
+      "mode": "100755",
+      "path": "scripts/breez-connect-check.py"
+    },
+    {
+      "blob": "45ddfa1bda378fb1ac28c824348519adbfbee42c",
+      "mode": "100755",
+      "path": "scripts/breez-create-invoice.py"
+    },
+    {
+      "blob": "d0003bb43271ce7c59b8ba037104678044b88d98",
+      "mode": "100755",
+      "path": "scripts/breez-payment-history.py"
+    },
+    {
+      "blob": "c19a9383e09d8fb002b2d328f627e0b24a45d945",
+      "mode": "100755",
+      "path": "scripts/breez-payment-history.sh"
+    },
+    {
+      "blob": "814bad2eef0d2a10d696034c61bb341700593cf3",
+      "mode": "100755",
+      "path": "scripts/breez-preimage-doctor.py"
+    },
+    {
+      "blob": "73950b17663df724cb52e98d242c6608bb9cc0df",
+      "mode": "100755",
+      "path": "scripts/check-breez-wallet.sh"
+    },
+    {
+      "blob": "f3d0ab4686ddfb39cd03d453e34edf18cecf9ac3",
+      "mode": "100755",
+      "path": "scripts/check-dist.sh"
+    },
+    {
+      "blob": "c8f31c058a8073e3b6543f1d6c76cb42a6fc2194",
+      "mode": "100755",
+      "path": "scripts/setup-voltage-paygate.sh"
+    },
+    {
+      "blob": "28690222f9880417548c74ddcfa3a10ee8d194df",
+      "mode": "100755",
+      "path": "scripts/typecheck.sh"
+    },
+    {
+      "blob": "39e41aebb6c22401497fb22aaa5768b3eae61346",
+      "mode": "100644",
+      "path": "tests/__init__.py"
+    },
+    {
+      "blob": "5e88c3886bd055c71b591594b16ca707ae38b379",
+      "mode": "100644",
+      "path": "tests/fixtures/paygate/dual_challenge.json"
+    },
+    {
+      "blob": "f00d81cc2363ecc57c39b69952cf48d3a70ca2ba",
+      "mode": "100644",
+      "path": "tests/fixtures/paygate/l402_challenge.json"
+    },
+    {
+      "blob": "591b5034a119632f086cd8ba2a7d07dd70405add",
+      "mode": "100644",
+      "path": "tests/fixtures/paygate/mpp_challenge.json"
+    },
+    {
+      "blob": "0b6c183947a07a08f46a424c7a2c2aa06e350f5f",
+      "mode": "100644",
+      "path": "tests/fixtures/paygate/mpp_credential.json"
+    },
+    {
+      "blob": "ba693440b98819f4c6ba3d0d71532f2133cac0ea",
+      "mode": "100644",
+      "path": "tests/test_challenges.py"
+    },
+    {
+      "blob": "9c20030d0f436cab8406d38befa4651f17a4773d",
+      "mode": "100644",
+      "path": "tests/test_cli.py"
+    },
+    {
+      "blob": "d1b62dafd9e645e8b5a5cffd429ba701cd1f4d45",
+      "mode": "100644",
+      "path": "tests/test_cli_smoke.py"
+    },
+    {
+      "blob": "23292712bf1e27df1c697ee1b2f60b804bf58974",
+      "mode": "100644",
+      "path": "tests/test_config.py"
+    },
+    {
+      "blob": "6c8723fffb4c55aee4526c6b3ae1ecd3ef98a24c",
+      "mode": "100644",
+      "path": "tests/test_credentials.py"
+    },
+    {
+      "blob": "419edc9d14109d3623dc67a61a99b487af2d1d4e",
+      "mode": "100644",
+      "path": "tests/test_diagnostics.py"
+    },
+    {
+      "blob": "c042fae0a6cee4b840f4a608c39d47c56f902408",
+      "mode": "100644",
+      "path": "tests/test_invoices.py"
+    },
+    {
+      "blob": "7fd49a1247dd5a795cc42990ac7aa553c71a8534",
+      "mode": "100644",
+      "path": "tests/test_ledger.py"
+    },
+    {
+      "blob": "93734331c8a21a7d7c1e3e47526a956212e0c3f3",
+      "mode": "100644",
+      "path": "tests/test_orchestrator.py"
+    },
+    {
+      "blob": "e6cf230eb446c861f9a005c123d2af8ba8322201",
+      "mode": "100644",
+      "path": "tests/test_package_metadata.py"
+    },
+    {
+      "blob": "4c43aab269332677d54f9230ff827f8c90df4661",
+      "mode": "100644",
+      "path": "tests/test_payers_breez.py"
+    },
+    {
+      "blob": "0b67a6d20c83414f634f7c1f4b7322c1c82ce9d2",
+      "mode": "100644",
+      "path": "tests/test_payers_lnd_rest.py"
+    },
+    {
+      "blob": "5da82d6adc4c936f896f2b77a14439c98ddd9b2c",
+      "mode": "100644",
+      "path": "tests/test_payers_phoenixd.py"
+    },
+    {
+      "blob": "cf511441ee34677c3c4355c5cfe64f8ed7c9f6e2",
+      "mode": "100644",
+      "path": "tests/test_payers_test_mode.py"
+    },
+    {
+      "blob": "31e2d11860ac037e2501b20f3cda8bc43974b13b",
+      "mode": "100644",
+      "path": "tests/test_paygate_fixtures.py"
+    },
+    {
+      "blob": "48402410256a52ff478eb86435227785c5b11cab",
+      "mode": "100644",
+      "path": "tests/test_policy.py"
+    },
+    {
+      "blob": "ebbabe04dbdb9c4eb02916d4fbab0ac13cc4ed18",
+      "mode": "100644",
+      "path": "tests/test_redaction.py"
+    },
+    {
+      "blob": "c81ddc14773a96162de7b1f29da38ea6aa7f77b7",
+      "mode": "100644",
+      "path": "tests/test_session_cache.py"
+    }
+  ]
+}
