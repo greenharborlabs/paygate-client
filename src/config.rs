@@ -1,11 +1,235 @@
 //! Safe YAML configuration input boundary.
 
 use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde_saphyr::granit_parser::{Event, Parser, ScalarStyle, Scanner, StrInput, TokenType};
 use serde_saphyr::{DuplicateKeyPolicy, MergeKeyPolicy};
 use thiserror::Error;
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ConfigError {
+    #[error("config file not found")]
+    Missing,
+    #[error("invalid configuration")]
+    Invalid,
+    #[error("unknown payer backend")]
+    UnknownBackend,
+    #[error("required environment value is missing: {0}")]
+    MissingSecret(String),
+    #[error(transparent)]
+    Input(#[from] ConfigInputError),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnvRef(pub String);
+impl EnvRef {
+    pub fn resolve(&self, env: &HashMap<String, String>) -> Result<String, ConfigError> {
+        env.get(&self.0)
+            .filter(|v| !v.is_empty())
+            .cloned()
+            .ok_or_else(|| ConfigError::MissingSecret(self.0.clone()))
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PayerConfig {
+    pub backend: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicyConfig {
+    pub max_request_sats: u64,
+    pub max_fee_sats: u64,
+    pub daily_budget_sats: u64,
+    pub allowed_hosts: Vec<String>,
+    pub allowed_services: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProtocolConfig {
+    pub preferred: String,
+    pub allow_l402: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaygateConfig {
+    pub payer: PayerConfig,
+    pub policy: PolicyConfig,
+    pub protocol: ProtocolConfig,
+}
+
+/// Expand the only shell-like spelling accepted at filesystem boundaries.  We
+/// deliberately do not expand environment variables or `~other`, which would
+/// make config interpretation depend on a shell.
+pub fn expand_path(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    let Some(text) = path.to_str() else {
+        return path.to_path_buf();
+    };
+    if text == "~" || text.starts_with("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(text.strip_prefix("~/").unwrap_or(""));
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Load config with process environment taking precedence over `voltage-env.sh`.
+pub fn load_config(path: impl AsRef<Path>) -> Result<PaygateConfig, ConfigError> {
+    let expanded = expand_path(path);
+    let path = expanded.as_path();
+    let bytes = fs::read(path).map_err(|_| ConfigError::Missing)?;
+    let raw: serde_json::Value = from_safe_yaml(&bytes)?;
+    let root = raw.as_object().ok_or(ConfigError::Invalid)?;
+    let payer = root
+        .get("payer")
+        .and_then(serde_json::Value::as_object)
+        .ok_or(ConfigError::Invalid)?;
+    let backend = string(payer, "backend")?;
+    if !matches!(
+        backend.as_str(),
+        "test-mode" | "phoenixd" | "lnd-rest" | "breez"
+    ) {
+        return Err(ConfigError::UnknownBackend);
+    }
+    // Resolve references for the selected backend only.  Values never enter
+    // the returned configuration, keeping Debug/display and CLI errors safe.
+    validate_selected_backend(root, &backend, &load_config_env(path))?;
+    let policy = root
+        .get("policy")
+        .and_then(serde_json::Value::as_object)
+        .ok_or(ConfigError::Invalid)?;
+    let max_request_sats = number(policy, "max_request_sats")?;
+    let max_fee_sats = number(policy, "max_fee_sats")?;
+    let daily_budget_sats = number(policy, "daily_budget_sats")?;
+    if max_request_sats > daily_budget_sats {
+        return Err(ConfigError::Invalid);
+    }
+    let allowed_hosts = strings(policy, "allowed_hosts")?;
+    let allowed_services = strings(policy, "allowed_services")?;
+    if allowed_hosts.is_empty() || allowed_services.is_empty() {
+        return Err(ConfigError::Invalid);
+    }
+    let protocol = match root.get("protocol") {
+        None | Some(serde_json::Value::Null) => ProtocolConfig {
+            preferred: "Payment".into(),
+            allow_l402: false,
+        },
+        Some(v) => {
+            let p = v.as_object().ok_or(ConfigError::Invalid)?;
+            let preferred = p
+                .get("preferred")
+                .map(|_| string(p, "preferred"))
+                .transpose()?
+                .unwrap_or_else(|| "Payment".into());
+            let allow_l402 = p
+                .get("allow_l402")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if !matches!(preferred.as_str(), "Payment" | "L402")
+                || (preferred == "L402" && !allow_l402)
+            {
+                return Err(ConfigError::Invalid);
+            }
+            ProtocolConfig {
+                preferred,
+                allow_l402,
+            }
+        }
+    };
+    Ok(PaygateConfig {
+        payer: PayerConfig { backend },
+        policy: PolicyConfig {
+            max_request_sats,
+            max_fee_sats,
+            daily_budget_sats,
+            allowed_hosts,
+            allowed_services,
+        },
+        protocol,
+    })
+}
+
+pub fn load_config_env(path: impl AsRef<Path>) -> HashMap<String, String> {
+    let expanded = expand_path(path);
+    let path = expanded.as_path();
+    let mut result = HashMap::new();
+    if let Ok(text) = fs::read_to_string(
+        path.parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("voltage-env.sh"),
+    ) {
+        for line in text.lines() {
+            if let Some(rest) = line.trim().strip_prefix("export ") {
+                if let Some((key, value)) = rest.split_once('=') {
+                    if key.chars().all(|c| c == '_' || c.is_ascii_alphanumeric())
+                        && key
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c == '_' || c.is_ascii_alphabetic())
+                    {
+                        result.insert(key.into(), value.trim_matches(['\'', '"']).into());
+                    }
+                }
+            }
+        }
+    }
+    result.extend(std::env::vars());
+    result
+}
+fn validate_selected_backend(
+    root: &serde_json::Map<String, serde_json::Value>,
+    backend: &str,
+    env: &HashMap<String, String>,
+) -> Result<(), ConfigError> {
+    let (section, required): (&str, &[&str]) = match backend {
+        "test-mode" => return Ok(()),
+        "phoenixd" => ("phoenixd", &["password_env"]),
+        "lnd-rest" => ("lnd", &["rest_url_env", "macaroon_hex_env"]),
+        "breez" => ("breez", &["api_key_env", "mnemonic_env"]),
+        _ => return Err(ConfigError::UnknownBackend),
+    };
+    let values = root
+        .get(section)
+        .and_then(serde_json::Value::as_object)
+        .ok_or(ConfigError::Invalid)?;
+    for key in required {
+        let variable = string(values, key)?;
+        EnvRef(variable).resolve(env)?;
+    }
+    Ok(())
+}
+fn string(
+    map: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<String, ConfigError> {
+    map.get(key)
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or(ConfigError::Invalid)
+}
+fn number(map: &serde_json::Map<String, serde_json::Value>, key: &str) -> Result<u64, ConfigError> {
+    map.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(ConfigError::Invalid)
+}
+fn strings(
+    map: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<Vec<String>, ConfigError> {
+    map.get(key)
+        .and_then(serde_json::Value::as_array)
+        .ok_or(ConfigError::Invalid)?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .ok_or(ConfigError::Invalid)
+        })
+        .collect()
+}
 
 /// A deliberately redacted configuration error. Source bytes and parser diagnostics are not
 /// retained because configuration can contain credentials.

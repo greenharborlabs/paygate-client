@@ -49,6 +49,21 @@ pub enum CancellationSemantics {
     AfterSubmissionUnknown,
 }
 
+impl CancellationSemantics {
+    /// A pre-submission cancellation is safe to retry; an interrupted submitted
+    /// payment is deliberately ambiguous and must never be retried automatically.
+    pub const fn retry_is_safe(self) -> bool {
+        matches!(self, Self::BeforeSubmission)
+    }
+
+    pub const fn required_outcome(self) -> SubmissionOutcome {
+        match self {
+            Self::BeforeSubmission => SubmissionOutcome::NotSubmitted,
+            Self::AfterSubmissionUnknown => SubmissionOutcome::SubmittedUnknown,
+        }
+    }
+}
+
 /// State the ledger must preserve after a payer attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SubmissionOutcome {
@@ -134,6 +149,28 @@ pub enum PaymentError {
     ProofMismatch,
     #[error("payment result is incomplete")]
     MissingProof,
+    #[error("payment submission outcome is ambiguous")]
+    AmbiguousSubmission,
+    #[error("payment cancellation state is inconsistent")]
+    InvalidCancellationState,
+}
+
+/// Check cancellation reports at the payment boundary.  In particular, callers
+/// cannot accidentally treat an ambiguous post-submission cancellation as a
+/// failed, retryable payment.
+pub fn verify_cancellation(
+    cancellation: CancellationSemantics,
+    outcome: SubmissionOutcome,
+) -> Result<(), PaymentError> {
+    if outcome == cancellation.required_outcome() {
+        return Ok(());
+    }
+    if cancellation == CancellationSemantics::AfterSubmissionUnknown
+        || outcome == SubmissionOutcome::SubmittedUnknown
+    {
+        return Err(PaymentError::AmbiguousSubmission);
+    }
+    Err(PaymentError::InvalidCancellationState)
 }
 
 /// Object-safe asynchronous contract implemented only by real payer adapters.
@@ -211,5 +248,38 @@ mod tests {
         assert_eq!(result.payment_hash(), &[2; 32]);
         assert_eq!(result.preimage(), &[3; 32]);
         assert_eq!(result.outcome(), SubmissionOutcome::Succeeded);
+    }
+
+    #[test]
+    fn cancellation_after_submission_is_never_retry_safe() {
+        assert!(CancellationSemantics::BeforeSubmission.retry_is_safe());
+        assert!(!CancellationSemantics::AfterSubmissionUnknown.retry_is_safe());
+        assert_eq!(
+            verify_cancellation(
+                CancellationSemantics::AfterSubmissionUnknown,
+                SubmissionOutcome::NotSubmitted,
+            ),
+            Err(PaymentError::AmbiguousSubmission)
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_payment_proof_mismatch() {
+        let invoice = ValidatedBolt11::parse(
+            "lnbc25m1pvjluezpp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5vdhkven9v5sxyetpdeessp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygs9q5sqqqqqqqqqqqqqqqpqsq67gye39hfg3zd8rgc80k32tvy9xk2xunwm5lzexnvpx6fd77en8qaq424dxgt56cag2dpt359k3ssyhetktkpqh24jqnjyw6uqd08sgptq44qu",
+        )
+        .expect("valid fixture");
+        let raw = RawPaymentResult {
+            amount_sats: invoice.amount_sats(),
+            fee_sats: 0,
+            payment_hash: Some(hex::encode(invoice.payment_hash())),
+            preimage_hex: Some("00".repeat(32)),
+            outcome: SubmissionOutcome::Succeeded,
+        };
+
+        assert_eq!(
+            verify_payment_result(&invoice, raw),
+            Err(PaymentError::ProofMismatch)
+        );
     }
 }
