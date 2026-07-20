@@ -1,0 +1,59 @@
+name: Rust payment canaries (separately approved, runner-gated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approve_lnd_testnet_canary:
+        description: "Approve only the LND testnet canary protected environment."
+        required: true
+        type: boolean
+        default: false
+      approve_breez_mainnet_canary:
+        description: "Approve only the Breez Mainnet canary protected environment."
+        required: true
+        type: boolean
+        default: false
+
+# No wallet secrets or write token are exposed here. A future reviewed, dedicated
+# runner contract must be added before either job can submit a payment.
+permissions:
+  contents: read
+
+jobs:
+  lnd-testnet-canary:
+    if: ${{ inputs.approve_lnd_testnet_canary }}
+    environment: lnd-testnet-canary
+    concurrency:
+      group: paygate-lnd-testnet-canary
+      cancel-in-progress: false
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Refuse without separately reviewed LND runner contract
+        run: |
+          set -euo pipefail
+          python3 scripts/check-rust-canary-contract.py --backend lnd-testnet-canary --runner-identity "${PAYGATE_PROTECTED_RUNNER_IDENTITY:-generic-hosted-runner}"
+          echo "LND testnet canary is approval-gated but has no reviewed runner contract."
+          echo "Refusing before invoice creation or payment submission; artifacts and temporary files are not durable no-retry state."
+          exit 1
+
+  breez-mainnet-canary:
+    if: ${{ inputs.approve_breez_mainnet_canary }}
+    environment: breez-mainnet-canary
+    concurrency:
+      group: paygate-breez-mainnet-canary
+      cancel-in-progress: false
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Refuse without separately reviewed Breez runner contract
+        run: |
+          set -euo pipefail
+          python3 scripts/check-rust-canary-contract.py --backend breez-mainnet-canary --runner-identity "${PAYGATE_PROTECTED_RUNNER_IDENTITY:-generic-hosted-runner}"
+          echo "Breez Mainnet canary is approval-gated but has no reviewed runner contract."
+          echo "Refusing before invoice creation or payment submission; artifacts and temporary files are not durable no-retry state."
+          exit 1

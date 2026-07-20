@@ -31,6 +31,8 @@ jobs:
         run: rustup toolchain install 1.88.0 --profile minimal
       - name: Run the balanced Wave 2 development gate
         shell: bash
+        env:
+          PAYGATE_QUALIFICATION_PYTHON: python3
         run: |
           set -euo pipefail
           cargo +1.88.0 fmt --check

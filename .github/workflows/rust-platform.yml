@@ -43,12 +43,22 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Fetching is deliberately separated from the hermetic build.  This is a
+      # fresh cache for this runner, never a committed vendor directory.
+      - name: Prime an isolated locked Cargo cache
+        env:
+          QUALIFICATION_CARGO_HOME: ${{ runner.temp }}/paygate-cargo-home
+        run: |
+          set -euo pipefail
+          test ! -e "$QUALIFICATION_CARGO_HOME" || { echo "qualification Cargo home already exists" >&2; exit 1; }
+          mkdir -p "$QUALIFICATION_CARGO_HOME"
+          CARGO_HOME="$QUALIFICATION_CARGO_HOME" cargo +1.88.0 fetch --locked
       - name: Build an immutable, attested target bundle
         env:
           TARGET: ${{ matrix.target }}
           LINUX_PLATFORM: ${{ matrix.linux_platform }}
           LINUX_BUILD_IMAGE: rust@sha256:b315f988b86912bafa7afd39a6ded0a497bf850ec36578ca9a3bdd6a14d5db4e
-          STUB_ROOT: tests/platform-smoke/stub
+          QUALIFICATION_CARGO_HOME: ${{ runner.temp }}/paygate-cargo-home
         run: |
           set -euo pipefail
           sha256_file() {
@@ -56,28 +66,27 @@ jobs:
             elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
             else echo "A SHA-256 tool is required" >&2; return 1; fi
           }
-          test -f "$STUB_ROOT/Cargo.toml"
-          test -f "$STUB_ROOT/Cargo.lock"
           if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
-            docker run --rm --platform "$LINUX_PLATFORM" \
+            docker run --rm --network none --platform "$LINUX_PLATFORM" \
               --volume "$GITHUB_WORKSPACE:/work" --workdir /work \
+              --volume "$QUALIFICATION_CARGO_HOME:/cargo-home:ro" \
+              --env CARGO_HOME=/cargo-home \
               "$LINUX_BUILD_IMAGE" \
-              cargo build --locked --release --target "$TARGET" \
-                --manifest-path "$STUB_ROOT/Cargo.toml" --target-dir target
+              sh -ceu 'rustc --version | grep -Eq "^rustc 1\\.88\\.0 "; cargo build --locked --offline --release --target "$1" --target-dir target' sh "$TARGET"
           else
             export MACOSX_DEPLOYMENT_TARGET=15.0
             rustup toolchain install 1.88.0 --profile minimal
-            cargo +1.88.0 build --locked --release --target "$TARGET" \
-              --manifest-path "$STUB_ROOT/Cargo.toml" --target-dir target
+            CARGO_HOME="$QUALIFICATION_CARGO_HOME" cargo +1.88.0 build --locked --offline --release --target "$TARGET" --target-dir target
           fi
           mkdir -p transfer/payload
           cp "target/$TARGET/release/paygate" transfer/payload/paygate
           tar -C transfer/payload -czf "transfer/runtime-artifact-${TARGET}.tar.gz" .
           artifact_sha256="$(sha256_file "transfer/runtime-artifact-${TARGET}.tar.gz")"
-          cargo_lock_sha256="$(sha256_file "$STUB_ROOT/Cargo.lock")"
+          binary_sha256="$(sha256_file "target/$TARGET/release/paygate")"
+          cargo_lock_sha256="$(sha256_file Cargo.lock)"
           # Values are runner-controlled identifiers without quotes/newlines by runner contract.
-          printf '{"target":"%s","artifact_sha256":"%s","source_commit":"%s","cargo_lock_sha256":"%s","builder_runner_identity":"%s"}\n' \
-            "$TARGET" "$artifact_sha256" "$GITHUB_SHA" "$cargo_lock_sha256" "$RUNNER_NAME" > transfer/qualification-manifest.json
+          printf '{"target":"%s","artifact_sha256":"%s","binary_sha256":"%s","source_commit":"%s","cargo_lock_sha256":"%s","builder_runner_identity":"%s","workflow_run_id":"%s"}\n' \
+            "$TARGET" "$artifact_sha256" "$binary_sha256" "$GITHUB_SHA" "$cargo_lock_sha256" "$RUNNER_NAME" "$GITHUB_RUN_ID" > transfer/qualification-manifest.json
           tar -C transfer -czf "transfer/runtime-bundle-${TARGET}.tar.gz" \
             "runtime-artifact-${TARGET}.tar.gz" qualification-manifest.json
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
@@ -119,6 +128,14 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - name: Prime an isolated locked Cargo cache
+        env:
+          QUALIFICATION_CARGO_HOME: ${{ runner.temp }}/paygate-cargo-home
+        run: |
+          set -euo pipefail
+          test ! -e "$QUALIFICATION_CARGO_HOME" || { echo "qualification Cargo home already exists" >&2; exit 1; }
+          mkdir -p "$QUALIFICATION_CARGO_HOME"
+          CARGO_HOME="$QUALIFICATION_CARGO_HOME" cargo +1.88.0 fetch --locked
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: rust-build-${{ matrix.target }}
@@ -141,7 +158,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           LINUX_PLATFORM: ${{ matrix.linux_platform }}
           LINUX_RUNTIME_IMAGE: rust@sha256:b315f988b86912bafa7afd39a6ded0a497bf850ec36578ca9a3bdd6a14d5db4e
-          STUB_ROOT: tests/platform-smoke/stub
+          QUALIFICATION_CARGO_HOME: ${{ runner.temp }}/paygate-cargo-home
         run: |
           set -euo pipefail
           sha256_file() {
@@ -177,11 +194,13 @@ jobs:
           manifest_value() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$manifest"; }
           test "$(manifest_value target)" = "$TARGET" || { echo "target mismatch" >&2; exit 1; }
           test "$(manifest_value source_commit)" = "$GITHUB_SHA" || { echo "source commit mismatch" >&2; exit 1; }
-          test "$(manifest_value cargo_lock_sha256)" = "$(sha256_file "$STUB_ROOT/Cargo.lock")" || { echo "Cargo.lock mismatch" >&2; exit 1; }
+          test "$(manifest_value cargo_lock_sha256)" = "$(sha256_file Cargo.lock)" || { echo "Cargo.lock mismatch" >&2; exit 1; }
           test "$(manifest_value artifact_sha256)" = "$(sha256_file "$artifact")" || { echo "artifact digest mismatch" >&2; exit 1; }
           test -n "$(manifest_value builder_runner_identity)" || { echo "missing builder identity" >&2; exit 1; }
+          test "$(manifest_value workflow_run_id)" = "$GITHUB_RUN_ID" || { echo "workflow run mismatch" >&2; exit 1; }
           mkdir runtime && tar -C runtime -xzf "$artifact"
           test -x runtime/paygate
+          test "$(manifest_value binary_sha256)" = "$(sha256_file runtime/paygate)" || { echo "binary digest mismatch" >&2; exit 1; }
           if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
             docker run --rm --platform "$LINUX_PLATFORM" \
               --volume "$GITHUB_WORKSPACE/runtime:/runtime:ro" \
@@ -202,6 +221,12 @@ jobs:
             runtime/paygate --version
             runtime/paygate --help
           fi
+          python3 scripts/check-rust-linkage.py "$TARGET" runtime/paygate
+          python3 -m venv "$RUNNER_TEMP/paygate-native-keyring"
+          controlled_python="$RUNNER_TEMP/paygate-native-keyring/bin/python"
+          python3 scripts/bootstrap-native-keyring.py --python "$controlled_python"
+          PAYGATE_QUALIFICATION_PYTHON="$controlled_python" PAYGATE_QUALIFICATION_KEYRING_MODE=native CARGO_HOME="$QUALIFICATION_CARGO_HOME" CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test keyring_qualification -- --ignored
+          CARGO_HOME="$QUALIFICATION_CARGO_HOME" CARGO_NET_OFFLINE=true PAYGATE_QUALIFICATION_TARGET="$TARGET" cargo +1.88.0 test --locked --offline --features breez-qualification --test breez_lifecycle_qualification -- --ignored
       - name: Write executor evidence
         if: ${{ success() }}
         env:
