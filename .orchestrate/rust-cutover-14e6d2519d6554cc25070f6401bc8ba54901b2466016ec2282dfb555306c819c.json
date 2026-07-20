@@ -1,10 +1,11 @@
 {
   "plan_path": "plans/rust-cutover.md",
   "plan_hash": "14e6d2519d6554cc25070f6401bc8ba54901b2466016ec2282dfb555306c819c",
-  "start_commit": "9e05106c77a57d745685013c1e1e56edf619ebab",
+  "start_commit": "e436f17e0c3476b9b139e9a4766b2940f8ef6492",
   "tasks": {
     "W2-01": "completed",
-    "W2-02": "completed"
+    "W2-02": "completed",
+    "W4": "completed"
   },
   "blocked_reasons": {},
   "gates": {
@@ -12,13 +13,26 @@
     "specialist_review": "completed"
   },
   "touched_tests": [
-    "tests/platform-smoke/test_rust_development_gate.py"
+    "tests/platform-smoke/test_rust_development_gate.py",
+    "tests/wave4_payer_adapters.rs",
+    "tests/breez_sdk_contract.rs"
   ],
-  "contract_registry": [],
+  "contract_registry": [
+    {
+      "file": "src/payers/breez.rs",
+      "name": "BreezSparkPayer",
+      "signature": "RealPayer implementation with explicit disconnect-gated storage release"
+    },
+    {
+      "file": "src/payers/lnd_rest.rs",
+      "name": "LndRestPayer<T>",
+      "signature": "RealPayer implementation over redirect-disabled injected transport"
+    }
+  ],
   "agent_suite": {
-    "coder": "generic Rust/Python coder",
-    "reviewer": "generic Rust/Python reviewer",
+    "coder": "generic Rust coder",
+    "reviewer": "generic Rust reviewer",
     "architect": "generic architect"
   },
-  "test_cmd": "Wave 2 documented development gate plus python3 tests/platform-smoke/test_rust_development_gate.py"
+  "test_cmd": "CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test wave4_payer_adapters"
 }

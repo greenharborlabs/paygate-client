@@ -3670,6 +3670,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bech32",
+ "bitcoin",
  "breez-sdk-spark",
  "clap",
  "fs4",

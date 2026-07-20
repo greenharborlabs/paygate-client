@@ -39,6 +39,7 @@ breez-sdk-spark = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f
 
 [dev-dependencies]
 async-trait = "=0.1.88"
+bitcoin = "=0.32.102"
 
 [profile.release]
 strip = true

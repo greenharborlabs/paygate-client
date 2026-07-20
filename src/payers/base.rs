@@ -153,6 +153,16 @@ pub enum PaymentError {
     AmbiguousSubmission,
     #[error("payment cancellation state is inconsistent")]
     InvalidCancellationState,
+    #[error("payment fee exceeds the configured maximum")]
+    FeeExceeded,
+    #[error("payer response was malformed or incomplete")]
+    MalformedResponse,
+    #[error("payer operation timed out")]
+    Timeout,
+    #[error("payer backend is unsupported")]
+    Unsupported,
+    #[error("payer transport failed")]
+    Transport,
 }
 
 /// Check cancellation reports at the payment boundary.  In particular, callers
