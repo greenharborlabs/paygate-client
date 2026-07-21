@@ -1,19 +1,153 @@
-//! Qualification-only bridge: exercise Rust state parsing and emit canonical evidence.
-use paygate::state::cache::CachedCredential;
+//! Qualification-only evidence from the compiled public CLI.
 use serde_json::{json, Value};
-use std::{fs, path::PathBuf};
+use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+const CASE_IDS: [&str; 3] = [
+    "credentials.list.success",
+    "credentials.show_missing",
+    "credentials.show_state",
+];
+
+fn sha256(path: &Path) -> String {
+    hex::encode(Sha256::digest(fs::read(path).expect("read identity input")))
+}
+
+fn source_commit() -> String {
+    if let Ok(value) = std::env::var("PAYGATE_SOURCE_COMMIT") {
+        return value;
+    }
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git must provide a source commit for local qualification");
+    assert!(output.status.success(), "source commit unavailable");
+    String::from_utf8(output.stdout).expect("commit UTF-8").trim().to_owned()
+}
+
+fn private_dir() -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("paygate-semantic-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(&path).expect("private test directory");
+    path
+}
+
+/// The child needs a usable credential, but evidence must never retain its
+/// authorization.  This fixture is created locally for each process run.
+fn execution_state() -> Value {
+    json!({"version": 1, "credentials": [{
+        "id": "fixture-id",
+        "scope": {"namespace": "oracle", "requestKey": "GET https://example.test/resource", "originHost": "example.test:443", "service": "orders", "protocol": "L402", "payerBackend": "test-mode", "policyHash": "2222222222222222222222222222222222222222222222222222222222222222"},
+        "authorization": "L402 qualification-placeholder", "createdAt": 946782245, "expiresAt": 946782305,
+        "maxUses": null, "useCount": 0, "lastSuccessAt": null, "lastRejectedAt": null,
+        "paymentHash": null, "challengeId": null, "secretStorage": "keyring"
+    }]})
+}
+
+fn safe_stdout(mut value: Value) -> Value {
+    if value.get("ok") == Some(&Value::Bool(false)) {
+        if let Some(error) = value.get_mut("error").and_then(Value::as_object_mut) {
+            error.remove("message");
+        }
+        value.as_object_mut().expect("JSON object").remove("paid");
+    }
+    value
+}
+
+fn safe_state(mut value: Value) -> Value {
+    let credentials = value
+        .get_mut("credentials")
+        .and_then(Value::as_array_mut)
+        .expect("state credentials array");
+    for credential in credentials {
+        let credential = credential.as_object_mut().expect("state credential object");
+        credential.insert("authorization".into(), Value::Null);
+        credential.insert("secretStorage".into(), Value::String("keyring".into()));
+    }
+    value
+}
+
+fn run_compiled_cli(args: &[&str], cache: &Path) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_paygate"))
+        .args(args)
+        .args(["--profile", "oracle", "--cache-path"])
+        .arg(cache)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("compiled paygate must start");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if child.try_wait().expect("compiled paygate status").is_some() {
+            return child.wait_with_output().expect("compiled paygate output");
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("stop timed-out compiled paygate");
+            let _ = child.wait_with_output();
+            panic!("compiled paygate timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn run_case(case_id: &str, args: &[&str]) -> Value {
+    let root = private_dir();
+    let cache = root.join("credentials.json");
+    let private_before = execution_state();
+    fs::write(&cache, serde_json::to_vec(&private_before).expect("state JSON"))
+        .expect("write private state");
+    #[cfg(unix)]
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o600))
+        .expect("make private state owner-only");
+    let child = run_compiled_cli(args, &cache);
+    assert!(child.stderr.is_empty(), "CLI emitted unexpected stderr");
+    let stdout: Value = serde_json::from_slice(&child.stdout).expect("CLI stdout must be JSON");
+    let private_after: Value = serde_json::from_slice(&fs::read(&cache).expect("read post-run state"))
+        .expect("post-run state must be JSON");
+    let exit_code = child.status.code().expect("CLI must not terminate by signal");
+    let expected_zero = case_id != "credentials.show_missing";
+    assert_eq!(exit_code == 0, expected_zero, "unexpected CLI status class");
+    let mut argv = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+    argv.extend(["--profile".into(), "oracle".into(), "--cache-path".into(), "<TEST_CACHE>".into()]);
+    let _ = fs::remove_dir_all(&root);
+    json!({
+        "argv": argv, "stdout_json": safe_stdout(stdout), "exit_code": exit_code,
+        "stderr_class": "empty", "state": {
+            "before": safe_state(private_before), "after": safe_state(private_after)
+        }
+    })
+}
 
 #[test]
-fn writes_real_rust_state_semantic_evidence() {
-    let output = PathBuf::from(std::env::var("PAYGATE_SEMANTIC_EVIDENCE")
-        .expect("explicit PAYGATE_SEMANTIC_EVIDENCE output path is required"));
-    let python: Value = serde_json::from_str(include_str!("../compat/python_oracle/golden/evidence.json")).unwrap();
-    let semantic = python["case_evidence"]["cache.schema"]["observations"]["state.cache"].clone();
-    let state: Value = serde_json::from_str(semantic["bytes"].as_str().unwrap()).unwrap();
-    let credential: CachedCredential = serde_json::from_value(state["credentials"][0].clone()).unwrap();
-    assert!(credential.usable(946_782_245));
-    let result = json!({"schema_version": 1, "cases": {"cache.schema": {
-        "semantic_json": semantic, "state": state, "exit": 0
-    }}});
-    fs::write(output, serde_json::to_vec(&result).unwrap()).unwrap();
+fn writes_independent_compiled_cli_semantic_evidence() {
+    let output = std::env::var("PAYGATE_SEMANTIC_EVIDENCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir().join("paygate-semantic-evidence-local.json"));
+    let executable = PathBuf::from(env!("CARGO_BIN_EXE_paygate"));
+    let lock = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+    let binary_sha256 = sha256(&executable);
+    let cargo_lock_sha256 = sha256(&lock);
+    if let Ok(expected) = std::env::var("PAYGATE_BINARY_SHA256") { assert_eq!(expected, binary_sha256); }
+    if let Ok(expected) = std::env::var("PAYGATE_CARGO_LOCK_SHA256") { assert_eq!(expected, cargo_lock_sha256); }
+    let commit = source_commit();
+    assert!(commit.len() == 40 && commit.bytes().all(|byte| byte.is_ascii_hexdigit()), "invalid source commit");
+    let cases = json!({
+        CASE_IDS[0]: run_case(CASE_IDS[0], &["credentials", "list"]),
+        CASE_IDS[1]: run_case(CASE_IDS[1], &["credentials", "show", "missing-id"]),
+        CASE_IDS[2]: run_case(CASE_IDS[2], &["credentials", "show", "fixture-id"]),
+    });
+    fs::write(output, serde_json::to_vec(&json!({
+        "schema_version": 2, "case_ids": CASE_IDS, "producer": "compiled-paygate-cli", "cases": cases,
+        "provenance": {"executable_sha256": binary_sha256, "source_commit": commit, "cargo_lock_sha256": cargo_lock_sha256}
+    })).expect("serialize evidence")).expect("write evidence");
 }

@@ -13,6 +13,8 @@ on:
 # in rust-payment-canary.yml and require their own explicit approval.
 permissions:
   contents: read
+  attestations: write
+  id-token: write
 
 jobs:
   qualification:
@@ -52,8 +54,11 @@ jobs:
           python3 scripts/check-rust-advisories.py --lock Cargo.lock --snapshot security/advisory-snapshot.json
           python3 -m compat.python_oracle.replay > python-oracle-evidence.json
           python3 scripts/extract-python-semantic-evidence.py python-oracle-evidence.json python-semantic-evidence.json
-          PAYGATE_SEMANTIC_EVIDENCE=rust-semantic-evidence.json cargo +1.88.0 test --locked --offline --test oracle_semantic_bridge
-          python3 scripts/check-oracle-semantic-contract.py --oracle python-semantic-evidence.json --rust-evidence rust-semantic-evidence.json
+          cargo +1.88.0 build --locked --offline --bin paygate
+          binary_sha256="$(sha256sum target/debug/paygate | awk '{print $1}')"
+          cargo_lock_sha256="$(sha256sum Cargo.lock | awk '{print $1}')"
+          PAYGATE_SEMANTIC_EVIDENCE=rust-semantic-evidence.json PAYGATE_BINARY_SHA256="$binary_sha256" PAYGATE_SOURCE_COMMIT="$GITHUB_SHA" PAYGATE_CARGO_LOCK_SHA256="$cargo_lock_sha256" cargo +1.88.0 test --locked --offline --test oracle_semantic_bridge
+          python3 scripts/check-oracle-semantic-contract.py --oracle python-semantic-evidence.json --rust-evidence rust-semantic-evidence.json --expected-binary-sha256 "$binary_sha256" --expected-source-commit "$GITHUB_SHA" --expected-cargo-lock-sha256 "$cargo_lock_sha256" | tee semantic-contract-result.txt
           # wave3_cli_state compares JSON/state semantics to the frozen Python
           # evidence; it intentionally does not compare human formatting bytes.
           cargo +1.88.0 fmt --check
@@ -67,3 +72,19 @@ jobs:
           # The property/fuzz smoke is deterministic and must never use a payer.
           cargo +1.88.0 test --locked --offline --test fuzz_smoke
           git diff --check
+      - name: Assemble immutable semantic evidence bundle
+        run: |
+          set -euo pipefail
+          tar -czf semantic-evidence-bundle.tar.gz python-semantic-evidence.json rust-semantic-evidence.json semantic-contract-result.txt
+          sha256sum semantic-evidence-bundle.tar.gz > semantic-evidence-bundle.sha256
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: semantic-evidence-bundle.tar.gz
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wave5-semantic-evidence-${{ github.run_id }}
+          path: |
+            semantic-evidence-bundle.tar.gz
+            semantic-evidence-bundle.sha256
+          if-no-files-found: error
+          retention-days: 90

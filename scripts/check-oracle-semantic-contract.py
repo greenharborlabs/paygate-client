@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Compare Python replay evidence with evidence emitted by real Rust code."""
+"""Fail-closed comparator for independent Python and compiled-CLI evidence."""
 import argparse
 import datetime as dt
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
+
+CASE_IDS = ("credentials.list.success", "credentials.show_missing", "credentials.show_state")
+CASE_FIELDS = {"argv", "stdout_json", "exit_code", "stderr_class", "state"}
+APPROVABLE_PATHS = {f"/{field}" for field in CASE_FIELDS}
+HASH = re.compile(r"^[0-9a-f]{64}$")
+COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 class ContractError(ValueError):
@@ -15,80 +23,164 @@ def load(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ContractError(f"invalid JSON: {path}") from exc
+        raise ContractError(f"invalid JSON: {path.name}") from exc
     if not isinstance(value, dict):
-        raise ContractError(f"JSON object required: {path}")
+        raise ContractError("JSON object required")
     return value
 
 
-def pointer(value: object, path: str) -> object:
-    if not path.startswith("/") or "*" in path:
-        raise ContractError("JSON Pointer must be concrete")
-    current = value
-    for token in path[1:].split("/"):
-        token = token.replace("~1", "/").replace("~0", "~")
-        if isinstance(current, dict) and token in current:
-            current = current[token]
-        elif isinstance(current, list) and token.isdigit() and int(token) < len(current):
-            current = current[int(token)]
-        else:
-            raise ContractError(f"JSON Pointer does not resolve: {path}")
-    return current
-
-
 def digest(value: object) -> str:
-    import hashlib
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--oracle", type=Path, default=Path("compat/python_oracle/golden/evidence.json"))
-    parser.add_argument("--rust-evidence", type=Path, required=True)
-    parser.add_argument("--registry", type=Path, default=Path("compat/python_oracle/intentional-differences.json"))
-    args = parser.parse_args(argv)
-    oracle, rust, registry = load(args.oracle), load(args.rust_evidence), load(args.registry)
-    py_cases, rs_cases = oracle.get("case_evidence"), rust.get("cases")
-    if not isinstance(py_cases, dict) or not isinstance(rs_cases, dict) or rust.get("schema_version") != 1:
+def pointer(value: object, path: str) -> object:
+    if path not in APPROVABLE_PATHS:
+        raise ContractError("approval path is not a top-level semantic field")
+    return value[path[1:]]
+
+
+def validate_case(case: object) -> None:
+    if not isinstance(case, dict) or set(case) != CASE_FIELDS:
+        raise ContractError("invalid semantic case fields")
+    argv = case["argv"]
+    if (
+        not isinstance(argv, list)
+        or not all(isinstance(arg, str) for arg in argv)
+        or "<TEST_CACHE>" not in argv
+    ):
+        raise ContractError("unsafe argv evidence")
+    if not isinstance(case["stdout_json"], dict):
+        raise ContractError("malformed CLI evidence")
+    if isinstance(case["exit_code"], bool) or not isinstance(case["exit_code"], int):
+        raise ContractError("malformed CLI evidence")
+    if case["stderr_class"] != "empty":
+        raise ContractError("unsafe stderr evidence")
+    state = case["state"]
+    if (
+        not isinstance(state, dict)
+        or set(state) != {"before", "after"}
+        or not isinstance(state["before"], dict)
+        or not isinstance(state["after"], dict)
+    ):
+        raise ContractError("malformed state evidence")
+
+
+def validate_record(value: dict, rust: bool) -> None:
+    expected = {"schema_version", "case_ids", "producer", "cases"}
+    if rust:
+        expected.add("provenance")
+    producer = "compiled-paygate-cli" if rust else "python-replay"
+    if (
+        set(value) != expected
+        or value.get("schema_version") != 2
+        or value.get("case_ids") != list(CASE_IDS)
+        or value.get("producer") != producer
+    ):
         raise ContractError("invalid semantic evidence schema")
-    if not set(rs_cases) or not set(rs_cases) <= set(py_cases):
-        raise ContractError("Rust evidence must name a non-empty exact subset of Python replay cases")
+    cases = value["cases"]
+    if not isinstance(cases, dict) or set(cases) != set(CASE_IDS):
+        raise ContractError("missing or extra semantic cases")
+    for case in cases.values():
+        validate_case(case)
+    if rust:
+        provenance = value["provenance"]
+        if (
+            not isinstance(provenance, dict)
+            or set(provenance)
+            != {"executable_sha256", "source_commit", "cargo_lock_sha256"}
+            or not all(
+                HASH.fullmatch(provenance.get(key, ""))
+                for key in ("executable_sha256", "cargo_lock_sha256")
+            )
+            or not COMMIT.fullmatch(provenance.get("source_commit", ""))
+        ):
+            raise ContractError("forged provenance")
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--oracle", type=Path, required=True)
+    parser.add_argument("--rust-evidence", type=Path, required=True)
+    parser.add_argument(
+        "--registry",
+        type=Path,
+        default=Path("compat/python_oracle/intentional-differences.json"),
+    )
+    # These independently computed workflow values are the trust anchor for
+    # self-reported Rust provenance.  Without all three, comparison is unsafe.
+    parser.add_argument("--expected-binary-sha256", required=True)
+    parser.add_argument("--expected-source-commit", required=True)
+    parser.add_argument("--expected-cargo-lock-sha256", required=True)
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    oracle, rust, registry = load(args.oracle), load(args.rust_evidence), load(args.registry)
+    validate_record(oracle, False)
+    validate_record(rust, True)
+    expected = {
+        "executable_sha256": args.expected_binary_sha256,
+        "source_commit": args.expected_source_commit,
+        "cargo_lock_sha256": args.expected_cargo_lock_sha256,
+    }
+    if (
+        not HASH.fullmatch(expected["executable_sha256"])
+        or not COMMIT.fullmatch(expected["source_commit"])
+        or not HASH.fullmatch(expected["cargo_lock_sha256"])
+        or any(rust["provenance"][key] != value for key, value in expected.items())
+    ):
+        raise ContractError("workflow provenance mismatch")
+
     approvals = registry.get("approvals")
     if registry.get("schema_version") != 2 or not isinstance(approvals, list):
         raise ContractError("invalid intentional-difference registry")
-    seen: set[tuple[str, str]] = set()
-    used: set[tuple[str, str]] = set()
-    today = dt.date.today()
+    seen, used = set(), set()
     for item in approvals:
-        required = {"case_id", "json_pointer", "python_value_digest", "rust_value_digest", "rationale", "expires_on"}
-        if not isinstance(item, dict) or set(item) != required:
+        required = {
+            "case_id",
+            "json_pointer",
+            "python_value_digest",
+            "rust_value_digest",
+            "rationale",
+            "expires_on",
+        }
+        if (
+            not isinstance(item, dict)
+            or set(item) != required
+            or not all(isinstance(value, str) and value for value in item.values())
+        ):
             raise ContractError("malformed approval")
-        case, path = item["case_id"], item["json_pointer"]
-        if not all(isinstance(v, str) and v for v in item.values()) or "*" in case or "*" in path:
-            raise ContractError("wildcard or empty approval")
-        key = (case, path)
-        if key in seen or case not in rs_cases:
-            raise ContractError("duplicate, stale, or unused approval")
-        seen.add(key)
+        case_id, path = item["case_id"], item["json_pointer"]
+        key = (case_id, path)
+        if case_id not in CASE_IDS or "*" in case_id or "*" in path or key in seen:
+            raise ContractError("wildcard or duplicate approval")
         try:
-            if dt.date.fromisoformat(item["expires_on"]) < today:
-                raise ContractError("expired approval")
+            if dt.date.fromisoformat(item["expires_on"]) < dt.date.today():
+                raise ContractError("stale approval")
         except ValueError as exc:
             raise ContractError("malformed approval expiry") from exc
-        py_value = pointer(py_cases[case], path)
-        rust_value = pointer(rs_cases[case], path)
-        if digest(py_value) != item["python_value_digest"] or digest(rust_value) != item["rust_value_digest"]:
+        python_value = pointer(oracle["cases"][case_id], path)
+        rust_value = pointer(rust["cases"][case_id], path)
+        if (
+            digest(python_value) != item["python_value_digest"]
+            or digest(rust_value) != item["rust_value_digest"]
+        ):
             raise ContractError("approval digest mismatch")
-        if py_value != rust_value:
+        seen.add(key)
+        if python_value != rust_value:
             used.add(key)
-    for case in rs_cases:
-        for path in ("/semantic_json", "/state", "/exit"):
-            py_value = pointer(py_cases[case], path)
-            rust_value = pointer(rs_cases[case], path)
-            if py_value != rust_value and (case, path) not in used:
-                raise ContractError(f"unapproved semantic difference: {case}{path}")
-    if used != seen:
-        raise ContractError("stale approval")
+    for case_id in CASE_IDS:
+        for field in CASE_FIELDS:
+            if (
+                oracle["cases"][case_id][field] != rust["cases"][case_id][field]
+                and (case_id, f"/{field}") not in used
+            ):
+                raise ContractError("unapproved semantic difference")
+    if seen != used:
+        raise ContractError("unused approval")
     print("oracle semantic contract: PASS")
     return 0
 
