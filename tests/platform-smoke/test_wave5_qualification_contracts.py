@@ -9,6 +9,42 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_python_semantic_extractor_emits_the_shared_case_schema(tmp_path: Path) -> None:
+    extractor = ROOT / "scripts/extract-python-semantic-evidence.py"
+    oracle_path, output_path = tmp_path / "oracle.json", tmp_path / "semantic.json"
+    state = {
+        "version": 1,
+        "credentials": [{
+            "id": "fixture-id", "authorization": "must-not-escape", "secretStorage": "keyring",
+            "scope": {"namespace": "oracle"}, "createdAt": 1, "expiresAt": None,
+            "maxUses": None, "useCount": 0, "lastSuccessAt": None,
+            "lastRejectedAt": None, "paymentHash": None, "challengeId": None,
+        }],
+    }
+    oracle_path.write_text(json.dumps({"case_evidence": {
+        "cache.schema": {"observations": {"state.cache": {"bytes": json.dumps(state)}}},
+        "credentials.show_found": {"observations": {"credentials.show_found": {"stdout": json.dumps({"ok": True, "credential": {"id": "fixture-id"}})}}},
+        "credentials.show_missing": {"observations": {"credentials.show_missing": {"stdout": json.dumps({"ok": False, "error": {"code": "NOT_FOUND", "message": "private detail"}})}}},
+    }}))
+    assert subprocess.run(
+        [sys.executable, str(extractor), str(oracle_path), str(output_path)], cwd=ROOT
+    ).returncode == 0
+    record = json.loads(output_path.read_text())
+    assert record["schema_version"] == 2
+    assert record["case_ids"] == [
+        "credentials.list.success", "credentials.show_missing", "credentials.show_state"
+    ]
+    assert record["producer"] == "python-replay"
+    assert set(record["cases"]) == set(record["case_ids"])
+    assert record["cases"]["credentials.show_missing"]["stdout_json"] == {
+        "ok": False, "error": {"code": "NOT_FOUND"}
+    }
+    credential = record["cases"]["credentials.list.success"]["state"]["before"]["credentials"][0]
+    assert credential["authorization"] is None
+    assert credential["secretStorage"] == "keyring"
+    assert "must-not-escape" not in json.dumps(record)
+
+
 def test_oracle_semantic_contract_and_rejections(tmp_path: Path) -> None:
     script = ROOT / "scripts/check-oracle-semantic-contract.py"
     ids = ["credentials.list.success", "credentials.show_missing", "credentials.show_state"]
