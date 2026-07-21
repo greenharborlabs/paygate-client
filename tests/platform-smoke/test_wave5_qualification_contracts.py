@@ -16,15 +16,15 @@ def test_python_semantic_extractor_emits_the_shared_case_schema(tmp_path: Path) 
         "version": 1,
         "credentials": [{
             "id": "fixture-id", "authorization": "must-not-escape", "secretStorage": "keyring",
-            "scope": {"namespace": "oracle"}, "createdAt": 1, "expiresAt": None,
+            "scope": {"namespace": "oracle", "requestKey": "GET https://example.test/resource", "originHost": "example.test:443", "service": "orders", "protocol": "L402", "payerBackend": "test-mode", "policyHash": "2" * 64}, "createdAt": 1, "expiresAt": None,
             "maxUses": None, "useCount": 0, "lastSuccessAt": None,
             "lastRejectedAt": None, "paymentHash": None, "challengeId": None,
         }],
     }
     oracle_path.write_text(json.dumps({"case_evidence": {
         "cache.schema": {"observations": {"state.cache": {"bytes": json.dumps(state)}}},
-        "credentials.show_found": {"observations": {"credentials.show_found": {"stdout": json.dumps({"ok": True, "credential": {"id": "fixture-id"}})}}},
-        "credentials.show_missing": {"observations": {"credentials.show_missing": {"stdout": json.dumps({"ok": False, "error": {"code": "NOT_FOUND", "message": "private detail"}})}}},
+        "credentials.show_found": {"observations": {"credentials.show_found": {"stdout": json.dumps({"ok": True, "credential": {"id": "fixture-id", "authorization": "[REDACTED_CREDENTIAL]", "scope": {"namespace": "oracle", "requestKey": "GET https://example.test/resource", "originHost": "example.test:443", "service": "orders", "protocol": "L402", "payerBackend": "test-mode", "policyHash": "2" * 64}, "createdAt": 1, "expiresAt": None, "maxUses": None, "useCount": 0, "lastSuccessAt": None, "lastRejectedAt": None, "paymentHash": None, "challengeId": None}})}}},
+        "credentials.show_missing": {"observations": {"credentials.show_missing": {"stdout": json.dumps({"ok": False, "error": {"code": "credential_not_found", "message": "private detail"}})}}},
     }}))
     assert subprocess.run(
         [sys.executable, str(extractor), str(oracle_path), str(output_path)], cwd=ROOT
@@ -37,12 +37,57 @@ def test_python_semantic_extractor_emits_the_shared_case_schema(tmp_path: Path) 
     assert record["producer"] == "python-replay"
     assert set(record["cases"]) == set(record["case_ids"])
     assert record["cases"]["credentials.show_missing"]["stdout_json"] == {
-        "ok": False, "error": {"code": "NOT_FOUND"}
+        "ok": False, "error": {"code": "credential_not_found"}
     }
     credential = record["cases"]["credentials.list.success"]["state"]["before"]["credentials"][0]
     assert credential["authorization"] is None
     assert credential["secretStorage"] == "keyring"
     assert "must-not-escape" not in json.dumps(record)
+
+
+def test_python_semantic_extractor_rejects_sensitive_or_unknown_replay_data(
+    tmp_path: Path,
+) -> None:
+    extractor = ROOT / "scripts/extract-python-semantic-evidence.py"
+    oracle_path, output_path = tmp_path / "oracle.json", tmp_path / "semantic.json"
+    state = {
+        "version": 1,
+        "credentials": [{
+            "id": "fixture-id", "authorization": "credential-secret", "secretStorage": "keyring",
+            "scope": {"namespace": "oracle", "requestKey": "GET https://example.test/resource", "originHost": "example.test:443", "service": "orders", "protocol": "L402", "payerBackend": "test-mode", "policyHash": "2" * 64}, "createdAt": 1, "expiresAt": None,
+            "maxUses": None, "useCount": 0, "lastSuccessAt": None, "lastRejectedAt": None,
+            "paymentHash": "payment-hash-secret", "challengeId": None,
+        }],
+    }
+    observation = {"case_evidence": {
+        "cache.schema": {"observations": {"state.cache": {"bytes": json.dumps(state)}}},
+        "credentials.show_found": {"observations": {"credentials.show_found": {"stdout": json.dumps({"ok": True, "credential": {"invoice": "lnbc-secret"}})}}},
+        "credentials.show_missing": {"observations": {"credentials.show_missing": {"stdout": json.dumps({"ok": False, "error": {"code": "credential_not_found", "message": "preimage-secret"}})}}},
+    }}
+    oracle_path.write_text(json.dumps(observation))
+    result = subprocess.run(
+        [sys.executable, str(extractor), str(oracle_path), str(output_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert not output_path.exists()
+    assert "payment-hash-secret" not in result.stderr
+    assert "credential-secret" not in result.stderr
+
+    state["credentials"][0]["paymentHash"] = None
+    oracle_path.write_text(json.dumps(observation))
+    result = subprocess.run(
+        [sys.executable, str(extractor), str(oracle_path), str(output_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert not output_path.exists()
+    assert "lnbc-secret" not in result.stderr
+    assert "preimage-secret" not in result.stderr
 
 
 def test_oracle_semantic_contract_and_rejections(tmp_path: Path) -> None:

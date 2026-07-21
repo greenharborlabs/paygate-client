@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Project independent Python replay observations into the semantic contract."""
+
 import argparse
 import json
 import sys
@@ -11,6 +12,30 @@ CASE_IDS = (
     "credentials.show_missing",
     "credentials.show_state",
 )
+STATE_FIELDS = {
+    "id",
+    "scope",
+    "authorization",
+    "createdAt",
+    "expiresAt",
+    "maxUses",
+    "useCount",
+    "lastSuccessAt",
+    "lastRejectedAt",
+    "paymentHash",
+    "challengeId",
+    "secretStorage",
+}
+PUBLIC_CREDENTIAL_FIELDS = STATE_FIELDS - {"secretStorage"}
+SCOPE_FIELDS = {
+    "namespace",
+    "requestKey",
+    "originHost",
+    "service",
+    "protocol",
+    "payerBackend",
+    "policyHash",
+}
 
 
 class ContractError(ValueError):
@@ -27,25 +52,59 @@ def object_at(value: object, *keys: str) -> dict:
     return value
 
 
-def parse_stdout(observation: dict) -> dict:
+def parse_stdout(observation: dict, expected_credential: dict | None = None) -> dict:
     try:
         value = json.loads(observation["stdout"])
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ContractError("invalid replay stdout") from exc
     if not isinstance(value, dict) or not isinstance(value.get("ok"), bool):
         raise ContractError("invalid replay stdout")
-    # Error prose may deliberately differ between implementations.  Keep the
-    # parsed envelope and classification, but never transport diagnostic text.
-    if not value.get("ok", False) and isinstance(value.get("error"), dict):
-        value["error"] = {"code": value["error"].get("code")}
-    return value
+    if value["ok"]:
+        if (
+            expected_credential is None
+            or set(value) != {"ok", "credential"}
+            or safe_public_credential(value["credential"]) != expected_credential
+        ):
+            raise ContractError("invalid replay stdout")
+        # Project from the independently validated state rather than retaining
+        # an arbitrary CLI envelope.
+        return {"ok": True, "credential": expected_credential}
+    if set(value) != {"ok", "error"} or not isinstance(value["error"], dict):
+        raise ContractError("invalid replay stdout")
+    if set(value["error"]) != {"code", "message"}:
+        raise ContractError("invalid replay stdout")
+    code = value["error"].get("code")
+    if (
+        not isinstance(code, str)
+        or not code.isascii()
+        or not code.replace("_", "").isalpha()
+    ):
+        raise ContractError("invalid replay stdout")
+    # Error prose may deliberately differ between implementations.  Keep only
+    # the classification and never transport diagnostic text.
+    return {"ok": False, "error": {"code": code}}
 
 
-def redacted_credential(credential: dict) -> dict:
-    result = dict(credential)
-    result.pop("secretStorage", None)
-    result["authorization"] = "[REDACTED_CREDENTIAL]"
-    return result
+def safe_public_credential(value: object) -> dict:
+    if not isinstance(value, dict) or set(value) != PUBLIC_CREDENTIAL_FIELDS:
+        raise ContractError("invalid replay credential")
+    if value["paymentHash"] is not None or value["challengeId"] is not None:
+        raise ContractError("invalid replay credential")
+    if not isinstance(value["scope"], dict) or set(value["scope"]) != SCOPE_FIELDS:
+        raise ContractError("invalid replay credential")
+    return {
+        "id": value["id"],
+        "scope": value["scope"],
+        "authorization": "[REDACTED_CREDENTIAL]",
+        "createdAt": value["createdAt"],
+        "expiresAt": value["expiresAt"],
+        "maxUses": value["maxUses"],
+        "useCount": value["useCount"],
+        "lastSuccessAt": value["lastSuccessAt"],
+        "lastRejectedAt": value["lastRejectedAt"],
+        "paymentHash": None,
+        "challengeId": None,
+    }
 
 
 def safe_state(value: object) -> dict:
@@ -54,19 +113,16 @@ def safe_state(value: object) -> dict:
         raise ContractError("invalid replay state")
     if value["version"] != 1 or not isinstance(value["credentials"], list):
         raise ContractError("invalid replay state")
-    fields = (
-        "id", "scope", "createdAt", "expiresAt", "maxUses", "useCount",
-        "lastSuccessAt", "lastRejectedAt", "paymentHash", "challengeId",
-    )
     credentials = []
     for entry in value["credentials"]:
-        if not isinstance(entry, dict) or not all(field in entry for field in fields):
+        if not isinstance(entry, dict) or set(entry) != STATE_FIELDS:
             raise ContractError("invalid replay state")
-        credentials.append({
-            **{field: entry[field] for field in fields},
-            "authorization": None,
-            "secretStorage": "keyring",
-        })
+        public = safe_public_credential(
+            {field: entry[field] for field in PUBLIC_CREDENTIAL_FIELDS}
+        )
+        credentials.append(
+            {**public, "authorization": None, "secretStorage": "keyring"}
+        )
     return {"version": 1, "credentials": credentials}
 
 
@@ -88,22 +144,70 @@ def main() -> int:
     try:
         oracle = json.loads(args.oracle.read_text(encoding="utf-8"))
         observations = object_at(oracle, "case_evidence")
-        raw_state = object_at(observations, "cache.schema", "observations", "state.cache")
+        raw_state = object_at(
+            observations, "cache.schema", "observations", "state.cache"
+        )
         state = safe_state(json.loads(raw_state["bytes"]))
         if not state["credentials"]:
             raise ContractError("invalid replay state")
-        credential = redacted_credential(state["credentials"][0])
-        show_found = parse_stdout(object_at(observations, "credentials.show_found", "observations", "credentials.show_found"))
-        show_missing = parse_stdout(object_at(observations, "credentials.show_missing", "observations", "credentials.show_missing"))
+        credential = safe_public_credential(
+            {
+                field: state["credentials"][0][field]
+                for field in PUBLIC_CREDENTIAL_FIELDS
+            }
+        )
+        show_found = parse_stdout(
+            object_at(
+                observations,
+                "credentials.show_found",
+                "observations",
+                "credentials.show_found",
+            ),
+            credential,
+        )
+        show_missing = parse_stdout(
+            object_at(
+                observations,
+                "credentials.show_missing",
+                "observations",
+                "credentials.show_missing",
+            )
+        )
         cache_arg = ["--profile", "oracle", "--cache-path", "<TEST_CACHE>"]
         cases = {
-            "credentials.list.success": case(["credentials", "list", *cache_arg], {"ok": True, "credentials": [credential]}, 0, state),
-            "credentials.show_missing": case(["credentials", "show", "missing-id", *cache_arg], show_missing, 1, state),
-            "credentials.show_state": case(["credentials", "show", "fixture-id", *cache_arg], show_found, 0, state),
+            "credentials.list.success": case(
+                ["credentials", "list", *cache_arg],
+                {"ok": True, "credentials": [credential]},
+                0,
+                state,
+            ),
+            "credentials.show_missing": case(
+                ["credentials", "show", "missing-id", *cache_arg],
+                show_missing,
+                1,
+                state,
+            ),
+            "credentials.show_state": case(
+                ["credentials", "show", "fixture-id", *cache_arg], show_found, 0, state
+            ),
         }
-        args.output.write_text(json.dumps({"schema_version": SCHEMA_VERSION, "case_ids": list(CASE_IDS), "producer": "python-replay", "cases": cases}, sort_keys=True), encoding="utf-8")
+        args.output.write_text(
+            json.dumps(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "case_ids": list(CASE_IDS),
+                    "producer": "python-replay",
+                    "cases": cases,
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
     except (OSError, KeyError, TypeError, json.JSONDecodeError, ContractError):
-        print("python semantic extraction: FAIL: invalid qualification input", file=sys.stderr)
+        print(
+            "python semantic extraction: FAIL: invalid qualification input",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

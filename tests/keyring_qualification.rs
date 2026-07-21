@@ -213,14 +213,21 @@ fn os_keyring_has_independent_bidirectional_and_legacy_probes() {
     let legacy_id = format!("legacy-{suffix}");
     let store = OsKeyringStore;
 
-    let python_path = std::env::var("PAYGATE_QUALIFICATION_PYTHON")
-        .expect("PAYGATE_QUALIFICATION_PYTHON must select Python with the reviewed keyring backend");
-    assert!(std::path::Path::new(&python_path).is_absolute(), "no ambient Python interpreter");
+    let python_path = std::env::var("PAYGATE_QUALIFICATION_PYTHON").expect(
+        "PAYGATE_QUALIFICATION_PYTHON must select Python with the reviewed keyring backend",
+    );
+    assert!(
+        std::path::Path::new(&python_path).is_absolute(),
+        "no ambient Python interpreter"
+    );
     let preflight = Command::new(&python_path)
         .arg("-c")
         .arg("import keyring,sys; assert keyring.__version__ == '25.7.0'; n=(keyring.get_keyring().__class__.__module__+'.'+keyring.get_keyring().__class__.__name__).lower(); assert not any(x in n for x in ('null','file','chainer','fail')); assert ('secretservice' in n) if sys.platform.startswith('linux') else ('macos' in n or 'keychain' in n)")
         .status().expect("verify controlled native keyring");
-    assert!(preflight.success(), "controlled interpreter must expose the native OS backend");
+    assert!(
+        preflight.success(),
+        "controlled interpreter must expose the native OS backend"
+    );
     let python = |code: &str, account: &str, secret: &str| {
         let status = Command::new(&python_path)
             .arg("-c")

@@ -392,7 +392,12 @@ fn open_safe_read(path: &Path) -> Result<Option<File>, CacheError> {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(_) => return Err(CacheError::Io),
         };
-        if !file.metadata().map_err(|_| CacheError::Io)?.file_type().is_file() {
+        if !file
+            .metadata()
+            .map_err(|_| CacheError::Io)?
+            .file_type()
+            .is_file()
+        {
             return Err(CacheError::Unsafe);
         }
         Ok(Some(file))
