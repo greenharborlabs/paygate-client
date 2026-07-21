@@ -182,22 +182,71 @@ def test_workflow_records_attested_bundle_metadata() -> None:
     assert "retention-days: 90" in workflow
 
 
-def test_canary_validator_requires_durable_runner_proof(tmp_path: Path) -> None:
+def test_canary_validator_requires_distinct_result_and_ledger_signatures(tmp_path: Path) -> None:
     script = ROOT / "scripts/check-rust-canary-result.py"
-    record = {"backend": "lnd-testnet-canary", "source_commit": "a" * 40, "cargo_lock_sha256": "b" * 64, "workflow_run_id": "9", "invoice_hash": "c" * 64, "payment_hash": "c" * 64, "spend_msat": 1, "fee_msat": 1, "cap_msat": 1000, "proof": {"sha256": "d" * 64}, "redaction": True, "state": "succeeded", "durable_no_retry_proof": {"sha256": "e" * 64, "runner_owned_uri": "runner-contract://ledger/one"}, "runner_identity": "approved-lnd-runner-v1", "attestation": {"sha256": "f" * 64}}
+    private, public = tmp_path / "runner.key", tmp_path / "runner.pub"
+    ledger_private, ledger_public = tmp_path / "ledger.key", tmp_path / "ledger.pub"
+    for secret, pub in ((private, public), (ledger_private, ledger_public)):
+        subprocess.run(["openssl", "genpkey", "-algorithm", "ED25519", "-out", str(secret)], check=True)
+        subprocess.run(["openssl", "pkey", "-in", str(secret), "-pubout", "-out", str(pub)], check=True)
+    contract = json.loads((ROOT / "security/payment-canary-contract.yaml").read_text())
+    for purpose, key_id, issuer, pub in (("result", "runner-v1", "reviewed-protected-runner", public), ("ledger", "ledger-v1", "paygate-durable-ledger-v1", ledger_public)):
+        ring = {"purpose": contract["keyrings"][purpose]["purpose"], "keys": [{"id": key_id, "issuer": issuer, "not_before": "2026-01-01T00:00:00Z", "not_after": "2027-01-01T00:00:00Z", "revoked": False, "public_key": str(pub)}]}
+        path = tmp_path / f"{purpose}-keyring.json"; path.write_text(json.dumps(ring)); contract["keyrings"][purpose]["path"] = str(path)
+    contract_path = tmp_path / "contract.json"; contract_path.write_text(json.dumps(contract))
+    record = {"backend": "lnd-testnet-canary", "source_commit": "a" * 40, "cargo_lock_sha256": "b" * 64, "workflow_run_id": "9", "attempt_key": ":".join(("a" * 40, "b" * 64, "lnd-testnet-canary", "9")), "invoice_hash": "c" * 64, "payment_hash": "c" * 64, "spend_msat": 1, "fee_msat": 1, "cap_msat": 1000, "proof": {"version": 1, "kind": "payment-hash-binding", "invoice_hash": "c" * 64, "payment_hash": "c" * 64, "redacted_hash": "d" * 64}, "redaction": True, "state": "succeeded", "runner_identity": "approved-lnd-runner-v1", "issued_at": "2026-07-19T00:00:00Z", "issuer": "reviewed-protected-runner", "key_id": "runner-v1"}
+    receipt = {"authority_uri": contract["durable_ledger"]["authority_uri"], "record_version": 1, "attempt_key": record["attempt_key"], "result_digest": sha256(json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest(), "terminal_state": "succeeded", "recorded_at": "2026-07-19T00:00:00Z", "issuer": "paygate-durable-ledger-v1", "key_id": "ledger-v1"}
+    receipt_path = tmp_path / "receipt"; receipt_signature = tmp_path / "receipt.sig"; receipt_path.write_bytes(json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode())
+    subprocess.run(["openssl", "pkeyutl", "-sign", "-inkey", str(ledger_private), "-rawin", "-in", str(receipt_path), "-out", str(receipt_signature)], check=True)
+    import base64
+    receipt["signature"] = base64.b64encode(receipt_signature.read_bytes()).decode(); record["durable_receipt"] = receipt
+    payload = json.dumps({k: ({x: y for x, y in v.items() if x != "signature"} if k == "durable_receipt" else v) for k, v in record.items()}, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    payload_path, signature_path = tmp_path / "payload", tmp_path / "signature"
+    payload_path.write_bytes(payload)
+    subprocess.run(["openssl", "pkeyutl", "-sign", "-inkey", str(private), "-rawin", "-in", str(payload_path), "-out", str(signature_path)], check=True)
+    record["signature"] = base64.b64encode(signature_path.read_bytes()).decode()
     result = tmp_path / "result.json"
     result.write_text(json.dumps(record))
-    assert subprocess.run([sys.executable, str(script), str(result)]).returncode == 0
-    record["durable_no_retry_proof"]["runner_owned_uri"] = "github-artifact://temporary"
+    command = [sys.executable, str(script), str(result), "--contract", str(contract_path), "--backend", "lnd-testnet-canary", "--source-commit", "a" * 40, "--cargo-lock-sha256", "b" * 64, "--workflow-run-id", "9"]
+    assert subprocess.run(command).returncode == 0
+    record["durable_receipt"]["authority_uri"] = "github-artifact://temporary"
     result.write_text(json.dumps(record))
-    assert subprocess.run([sys.executable, str(script), str(result)]).returncode != 0
+    assert subprocess.run(command).returncode != 0
+    record["durable_receipt"]["authority_uri"] = contract["durable_ledger"]["authority_uri"]
+    record["spend_msat"] = 2  # canonical signed payload mutation
+    result.write_text(json.dumps(record))
+    assert subprocess.run(command).returncode != 0
 
 
 def test_payment_canaries_are_separate_protected_fail_closed_jobs() -> None:
     workflow = (ROOT / ".github/workflows/rust-payment-canary.yml").read_text()
     for backend in ("lnd-testnet-canary", "breez-mainnet-canary"):
         assert f"environment: {backend}" in workflow
-        assert f"group: paygate-{backend}" in workflow
-    assert "runner contract" in workflow.lower()
+    assert "group: paygate-payment-canary" in workflow
+    assert "runs-on: [self-hosted, linux, paygate-payment-canary" in workflow
+    assert "/opt/paygate/payment-canary-runner/current/payment-canary-runner" in workflow
+    assert "--infrastructure-attestation /var/lib/paygate/payment-canary/live-infrastructure-attestation.json" in workflow
+    assert "always()" in workflow
     assert "secrets:" not in workflow
-    assert "exit 1" in workflow
+    assert "exactly one backend approval is required" in workflow
+
+
+def test_canary_control_plane_uses_literal_attempt_keys_and_preflight_guards() -> None:
+    runner = (ROOT / "infra/payment-canary-runner/payment_canary_runner.py").read_text()
+    workflow = (ROOT / ".github/workflows/rust-payment-canary.yml").read_text()
+    contract = json.loads((ROOT / "security/payment-canary-contract.yaml").read_text())
+    inventory = json.loads((ROOT / "infra/runners/payment-canary.yml").read_text())
+
+    assert 'return ":".join((a.source_commit,a.cargo_lock_sha256,a.backend,a.workflow_run_id))' in runner
+    assert "def validate_protected_path" in runner
+    assert "os.lstat(current)" in runner
+    assert '"--deny-network"' in runner
+    assert "stdin=subprocess.DEVNULL" in runner
+    assert contract["deployment"] == {k: inventory["deployment"][k] for k in contract["deployment"]}
+    assert contract["durable_ledger"]["authority_uri"] == inventory["durable_ledger"]["authority_uri"]
+    for backend in ("lnd-testnet-canary", "breez-mainnet-canary"):
+        marker = f"--backend {backend}"
+        start = workflow.index(marker)
+        status = workflow.index("runner_status=$?", start)
+        output = workflow.index('echo "invoked=true"', start)
+        assert status < output

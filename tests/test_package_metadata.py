@@ -32,6 +32,14 @@ except PackageNotFoundError:
     BUILD_AVAILABLE = False
 
 
+def test_rust_payment_canary_is_qualification_only_and_not_default_binary() -> None:
+    manifest = (ROOT / "Cargo.toml").read_text()
+    assert 'default-run = "paygate"' in manifest
+    assert 'name = "payment_canary"' in manifest
+    assert 'required-features = ["payment-canary-qualification"]' in manifest
+    assert 'payment-canary-qualification = []' in manifest
+
+
 def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,

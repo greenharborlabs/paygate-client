@@ -1,0 +1,1 @@
+{"purpose":"durable-ledger-receipt","keys":[{"id":"ledger-v1","issuer":"paygate-durable-ledger-v1","not_before":"2026-01-01T00:00:00Z","not_after":"2027-01-01T00:00:00Z","revoked":false,"public_key":"security/payment-canary-trust/ledger-v1.pub"}]}

@@ -6,6 +6,7 @@ rust-version = "1.88.0"
 license = "MIT"
 description = "Command-line client for Paygate"
 repository = "https://github.com/greenharborlabs/paygate-client"
+default-run = "paygate"
 
 [lib]
 name = "paygate"
@@ -15,9 +16,15 @@ path = "src/lib.rs"
 name = "paygate"
 path = "src/main.rs"
 
+[[bin]]
+name = "payment_canary"
+path = "src/bin/payment_canary.rs"
+required-features = ["payment-canary-qualification"]
+
 [features]
 default = []
 breez-qualification = ["dep:breez-sdk-spark"]
+payment-canary-qualification = []
 
 [dependencies]
 async-trait = "=0.1.88"
