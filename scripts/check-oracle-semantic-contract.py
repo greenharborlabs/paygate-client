@@ -10,6 +10,16 @@ from pathlib import Path
 
 CASE_IDS = ("credentials.list.success", "credentials.show_missing", "credentials.show_state")
 CASE_FIELDS = {"argv", "stdout_json", "exit_code", "stderr_class", "state"}
+STATE_FIELDS = {
+    "id", "scope", "authorization", "createdAt", "expiresAt", "maxUses",
+    "useCount", "lastSuccessAt", "lastRejectedAt", "paymentHash", "challengeId",
+    "secretStorage",
+}
+PUBLIC_CREDENTIAL_FIELDS = STATE_FIELDS - {"secretStorage"}
+SCOPE_FIELDS = {
+    "namespace", "requestKey", "originHost", "service", "protocol",
+    "payerBackend", "policyHash",
+}
 APPROVABLE_PATHS = {f"/{field}" for field in CASE_FIELDS}
 HASH = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -41,7 +51,69 @@ def pointer(value: object, path: str) -> object:
     return value[path[1:]]
 
 
-def validate_case(case: object) -> None:
+def validate_public_credential(value: object) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != PUBLIC_CREDENTIAL_FIELDS
+        or value.get("authorization") != "[REDACTED_CREDENTIAL]"
+        or value.get("paymentHash") is not None
+        or value.get("challengeId") is not None
+        or not isinstance(value.get("scope"), dict)
+        or set(value["scope"]) != SCOPE_FIELDS
+    ):
+        raise ContractError("malformed public credential evidence")
+
+
+def validate_state(value: object) -> None:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "credentials"}
+        or value.get("version") != 1
+        or not isinstance(value.get("credentials"), list)
+    ):
+        raise ContractError("malformed state evidence")
+    for credential in value["credentials"]:
+        if (
+            not isinstance(credential, dict)
+            or set(credential) != STATE_FIELDS
+            or credential.get("authorization") is not None
+            or credential.get("secretStorage") != "keyring"
+        ):
+            raise ContractError("malformed state evidence")
+        public = {field: credential[field] for field in PUBLIC_CREDENTIAL_FIELDS}
+        public["authorization"] = "[REDACTED_CREDENTIAL]"
+        validate_public_credential(public)
+
+
+def validate_stdout(case_id: str, value: object) -> None:
+    if not isinstance(value, dict):
+        raise ContractError("malformed CLI evidence")
+    if case_id == "credentials.list.success":
+        if set(value) != {"ok", "credentials"} or value.get("ok") is not True or not isinstance(value.get("credentials"), list):
+            raise ContractError("malformed CLI evidence")
+        for credential in value["credentials"]:
+            validate_public_credential(credential)
+    elif case_id == "credentials.show_state":
+        if set(value) != {"ok", "credential"} or value.get("ok") is not True:
+            raise ContractError("malformed CLI evidence")
+        validate_public_credential(value.get("credential"))
+    elif case_id == "credentials.show_missing":
+        error = value.get("error")
+        if (
+            set(value) != {"ok", "error"}
+            or value.get("ok") is not False
+            or not isinstance(error, dict)
+            or set(error) != {"code"}
+            or not isinstance(error.get("code"), str)
+            or not error["code"].isascii()
+            or not error["code"].replace("_", "").isalpha()
+        ):
+            raise ContractError("malformed CLI evidence")
+    else:
+        raise ContractError("unknown semantic case")
+
+
+def validate_case(case_id: str, case: object) -> None:
     if not isinstance(case, dict) or set(case) != CASE_FIELDS:
         raise ContractError("invalid semantic case fields")
     argv = case["argv"]
@@ -51,20 +123,19 @@ def validate_case(case: object) -> None:
         or "<TEST_CACHE>" not in argv
     ):
         raise ContractError("unsafe argv evidence")
-    if not isinstance(case["stdout_json"], dict):
-        raise ContractError("malformed CLI evidence")
+    validate_stdout(case_id, case["stdout_json"])
     if isinstance(case["exit_code"], bool) or not isinstance(case["exit_code"], int):
         raise ContractError("malformed CLI evidence")
     if case["stderr_class"] != "empty":
         raise ContractError("unsafe stderr evidence")
     state = case["state"]
-    if (
-        not isinstance(state, dict)
-        or set(state) != {"before", "after"}
-        or not isinstance(state["before"], dict)
-        or not isinstance(state["after"], dict)
-    ):
+    if not isinstance(state, dict) or set(state) != {"before", "after"}:
         raise ContractError("malformed state evidence")
+    validate_state(state["before"])
+    validate_state(state["after"])
+    expected_zero = case_id != "credentials.show_missing"
+    if (case["exit_code"] == 0) != expected_zero:
+        raise ContractError("unexpected CLI exit evidence")
 
 
 def validate_record(value: dict, rust: bool) -> None:
@@ -82,8 +153,8 @@ def validate_record(value: dict, rust: bool) -> None:
     cases = value["cases"]
     if not isinstance(cases, dict) or set(cases) != set(CASE_IDS):
         raise ContractError("missing or extra semantic cases")
-    for case in cases.values():
-        validate_case(case)
+    for case_id, case in cases.items():
+        validate_case(case_id, case)
     if rust:
         provenance = value["provenance"]
         if (

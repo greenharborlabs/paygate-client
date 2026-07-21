@@ -36,6 +36,7 @@ SCOPE_FIELDS = {
     "payerBackend",
     "policyHash",
 }
+CASE_FIELDS = {"argv", "stdout_json", "exit_code", "stderr_class", "state"}
 
 
 class ContractError(ValueError):
@@ -136,6 +137,27 @@ def case(argv: list[str], stdout_json: dict, exit_code: int, state: dict) -> dic
     }
 
 
+def validate_shared_case_contract(cases: dict) -> None:
+    """Fail closed if this independent producer drifts from the shared contract."""
+    if set(cases) != set(CASE_IDS):
+        raise ContractError("invalid semantic cases")
+    for case_id in CASE_IDS:
+        evidence = cases[case_id]
+        if set(evidence) != CASE_FIELDS or evidence["stderr_class"] != "empty":
+            raise ContractError("invalid semantic case")
+        expected_zero = case_id != "credentials.show_missing"
+        if (evidence["exit_code"] == 0) != expected_zero:
+            raise ContractError("invalid semantic exit evidence")
+        if "<TEST_CACHE>" not in evidence["argv"]:
+            raise ContractError("unsafe semantic argv")
+    if set(cases["credentials.list.success"]["stdout_json"]) != {"ok", "credentials"}:
+        raise ContractError("invalid semantic success evidence")
+    if set(cases["credentials.show_state"]["stdout_json"]) != {"ok", "credential"}:
+        raise ContractError("invalid semantic success evidence")
+    if set(cases["credentials.show_missing"]["stdout_json"]) != {"ok", "error"}:
+        raise ContractError("invalid semantic error evidence")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("oracle", type=Path)
@@ -191,6 +213,7 @@ def main() -> int:
                 ["credentials", "show", "fixture-id", *cache_arg], show_found, 0, state
             ),
         }
+        validate_shared_case_contract(cases)
         args.output.write_text(
             json.dumps(
                 {

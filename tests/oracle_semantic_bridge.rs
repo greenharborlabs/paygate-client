@@ -203,7 +203,9 @@ fn safe_stdout(case_id: &str, value: &Value, state: &Value) -> Result<Value, &'s
                     invalid_child_data()
                 };
             }
-            Ok(json!({"ok": true, "credentials": public}))
+            // Preserve the sanitized child observation. `public` above is only
+            // the independently parsed cache-state comparator.
+            Ok(json!({"ok": true, "credentials": observed}))
         }
         "credentials.show_state" => {
             if !has_exact_fields(object, &["ok", "credential"])
@@ -221,7 +223,9 @@ fn safe_stdout(case_id: &str, value: &Value, state: &Value) -> Result<Value, &'s
             if observed != expected {
                 return invalid_child_data();
             }
-            Ok(json!({"ok": true, "credential": expected}))
+            // Preserve the sanitized child observation, rather than rebuilding
+            // a result from the expected fixture/cache state.
+            Ok(json!({"ok": true, "credential": observed}))
         }
         "credentials.show_missing" => {
             let error = match object.get("error").and_then(Value::as_object) {
@@ -276,15 +280,21 @@ fn run_compiled_cli(args: &[&str], cache: &Path) -> Output {
 fn run_case(case_id: &str, args: &[&str]) -> Value {
     let root = private_dir();
     let cache = root.join("credentials.json");
-    let private_before = execution_state();
+    // The fixture is private test input only. Evidence must originate from
+    // parsing the cache file, never from this in-memory value.
+    let private_input = execution_state();
     fs::write(
         &cache,
-        serde_json::to_vec(&private_before).expect("state JSON"),
+        serde_json::to_vec(&private_input).expect("state JSON"),
     )
     .expect("write private state");
+    drop(private_input);
     #[cfg(unix)]
     fs::set_permissions(&cache, fs::Permissions::from_mode(0o600))
         .expect("make private state owner-only");
+    let private_before: Value =
+        serde_json::from_slice(&fs::read(&cache).expect("read pre-run state"))
+            .expect("pre-run state must be JSON");
     let child = run_compiled_cli(args, &cache);
     assert!(child.stderr.is_empty(), "CLI emitted unexpected stderr");
     let stdout: Value = serde_json::from_slice(&child.stdout).expect("CLI stdout must be JSON");
@@ -317,6 +327,34 @@ fn run_case(case_id: &str, args: &[&str]) -> Value {
     })
 }
 
+fn validate_compiled_case_contract(cases: &serde_json::Map<String, Value>) {
+    assert_eq!(cases.len(), CASE_IDS.len(), "unexpected semantic case count");
+    for case_id in CASE_IDS {
+        let case = cases.get(case_id).expect("missing semantic case");
+        let object = case.as_object().expect("semantic case must be an object");
+        assert!(
+            has_exact_fields(object, &["argv", "stdout_json", "exit_code", "stderr_class", "state"]),
+            "unexpected semantic case fields"
+        );
+        assert_eq!(object["stderr_class"], "empty");
+        assert!(object["argv"].as_array().is_some_and(|args| args.contains(&json!("<TEST_CACHE>"))));
+        let expected_zero = case_id != "credentials.show_missing";
+        assert_eq!(object["exit_code"].as_i64() == Some(0), expected_zero);
+    }
+    assert!(has_exact_fields(
+        cases["credentials.list.success"]["stdout_json"].as_object().expect("list stdout"),
+        &["ok", "credentials"],
+    ));
+    assert!(has_exact_fields(
+        cases["credentials.show_state"]["stdout_json"].as_object().expect("show stdout"),
+        &["ok", "credential"],
+    ));
+    assert!(has_exact_fields(
+        cases["credentials.show_missing"]["stdout_json"].as_object().expect("missing stdout"),
+        &["ok", "error"],
+    ));
+}
+
 #[test]
 fn safe_projections_redact_secrets_and_reject_unsafe_fields() {
     let mut state = execution_state();
@@ -339,6 +377,25 @@ fn safe_projections_redact_secrets_and_reject_unsafe_fields() {
         safe_stdout("credentials.list.success", &arbitrary_success, &projected),
         Err("invalid qualification child data")
     );
+}
+
+#[test]
+fn evidence_pre_state_is_parsed_from_the_written_private_cache() {
+    let root = private_dir();
+    let cache = root.join("credentials.json");
+    let mut fixture_only = execution_state();
+    fs::write(&cache, serde_json::to_vec(&fixture_only).expect("state JSON"))
+        .expect("write private state");
+
+    // Change the fixture after writing. The evidence source is the just-written
+    // private file, so this in-memory mutation must not affect the projection.
+    fixture_only["credentials"][0]["id"] = json!("mutated-in-memory-fixture");
+    let parsed_before: Value = serde_json::from_slice(&fs::read(&cache).expect("read private state"))
+        .expect("private state JSON");
+    let before = safe_state(&parsed_before).expect("safe private state");
+    assert_eq!(before["credentials"][0]["id"], "fixture-id");
+    assert_ne!(before, safe_state(&fixture_only).expect("safe fixture projection"));
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -366,6 +423,7 @@ fn writes_independent_compiled_cli_semantic_evidence() {
         CASE_IDS[1]: run_case(CASE_IDS[1], &["credentials", "show", "missing-id"]),
         CASE_IDS[2]: run_case(CASE_IDS[2], &["credentials", "show", "fixture-id"]),
     });
+    validate_compiled_case_contract(cases.as_object().expect("semantic case map"));
     fs::write(output, serde_json::to_vec(&json!({
         "schema_version": 2, "case_ids": CASE_IDS, "producer": "compiled-paygate-cli", "cases": cases,
         "provenance": {"executable_sha256": binary_sha256, "source_commit": commit, "cargo_lock_sha256": cargo_lock_sha256}

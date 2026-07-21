@@ -75,16 +75,23 @@ jobs:
       - name: Assemble immutable semantic evidence bundle
         run: |
           set -euo pipefail
+          # The archive is the immutable attestation subject. Metadata is
+          # deliberately outside it: an archive cannot contain its final hash.
           tar -czf semantic-evidence-bundle.tar.gz python-semantic-evidence.json rust-semantic-evidence.json semantic-contract-result.txt
           sha256sum semantic-evidence-bundle.tar.gz > semantic-evidence-bundle.sha256
+          bundle_sha256="$(awk '{print $1}' semantic-evidence-bundle.sha256)"
+          python3 -c 'import json, sys; print(json.dumps({"schema_version": 1, "subject_name": "semantic-evidence-bundle.tar.gz", "archive_subject_sha256": sys.argv[1], "digest_scope": "archive subject SHA-256; not a GitHub-attestation ID", "retention_days": 90, "source_commit": sys.argv[2], "workflow_run_id": sys.argv[3]}, separators=(",", ":")))' "$bundle_sha256" "$GITHUB_SHA" "$GITHUB_RUN_ID" > semantic-evidence-bundle-metadata.json
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
-          subject-path: semantic-evidence-bundle.tar.gz
+          subject-path: |
+            semantic-evidence-bundle.tar.gz
+            semantic-evidence-bundle-metadata.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: wave5-semantic-evidence-${{ github.run_id }}
           path: |
             semantic-evidence-bundle.tar.gz
             semantic-evidence-bundle.sha256
+            semantic-evidence-bundle-metadata.json
           if-no-files-found: error
           retention-days: 90

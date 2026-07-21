@@ -93,11 +93,21 @@ def test_python_semantic_extractor_rejects_sensitive_or_unknown_replay_data(
 def test_oracle_semantic_contract_and_rejections(tmp_path: Path) -> None:
     script = ROOT / "scripts/check-oracle-semantic-contract.py"
     ids = ["credentials.list.success", "credentials.show_missing", "credentials.show_state"]
+    credential = {
+        "id": "fixture-id", "authorization": "[REDACTED_CREDENTIAL]",
+        "scope": {"namespace": "oracle", "requestKey": "GET", "originHost": "example.test:443", "service": "orders", "protocol": "L402", "payerBackend": "test-mode", "policyHash": "2" * 64},
+        "createdAt": 1, "expiresAt": None, "maxUses": None, "useCount": 0,
+        "lastSuccessAt": None, "lastRejectedAt": None, "paymentHash": None,
+        "challengeId": None,
+    }
+    state_credential = {**credential, "authorization": None, "secretStorage": "keyring"}
+    state = {"version": 1, "credentials": [state_credential]}
     cases = {
-        case_id: {"argv": ["credentials", "list", "<TEST_CACHE>"], "stdout_json": {"ok": True}, "exit_code": 0, "stderr_class": "empty", "state": {"before": {}, "after": {}}}
+        case_id: {"argv": ["credentials", "list", "<TEST_CACHE>"], "stdout_json": {"ok": True, "credentials": [credential]}, "exit_code": 0, "stderr_class": "empty", "state": {"before": state, "after": state}}
         for case_id in ids
     }
-    cases["credentials.show_missing"]["exit_code"] = 1
+    cases["credentials.show_missing"].update({"stdout_json": {"ok": False, "error": {"code": "credential_not_found"}}, "exit_code": 1})
+    cases["credentials.show_state"]["stdout_json"] = {"ok": True, "credential": credential}
     oracle = {"schema_version": 2, "case_ids": ids, "producer": "python-replay", "cases": cases}
     rust = {**oracle, "producer": "compiled-paygate-cli", "provenance": {"executable_sha256": "a" * 64, "source_commit": "b" * 40, "cargo_lock_sha256": "c" * 64}}
     oracle_path, rust_path, registry_path = (tmp_path / name for name in ("oracle.json", "rust.json", "registry.json"))
@@ -134,6 +144,8 @@ def test_oracle_semantic_contract_and_rejections(tmp_path: Path) -> None:
     assert subprocess.run(command(), cwd=ROOT).returncode != 0
     malformed_state = deepcopy(rust); malformed_state["cases"][ids[0]]["state"] = ["before", "after"]
     assert run(candidate_rust=malformed_state).returncode != 0
+    malformed_stdout = deepcopy(rust); malformed_stdout["cases"][ids[0]]["stdout_json"] = {"ok": True}
+    assert run(candidate_rust=malformed_stdout).returncode != 0
     mismatch_exit = deepcopy(rust); mismatch_exit["cases"][ids[1]]["exit_code"] = 0
     assert run(candidate_rust=mismatch_exit).returncode != 0
     mismatch_state = deepcopy(rust); mismatch_state["cases"][ids[0]]["state"]["after"] = {"redacted": True}
@@ -147,6 +159,27 @@ def test_oracle_semantic_contract_and_rejections(tmp_path: Path) -> None:
     assert run(registry=stale).returncode != 0
     unused = {"schema_version": 2, "approvals": [{"case_id": ids[0], "json_pointer": "/exit_code", "python_value_digest": sha256(b"0").hexdigest(), "rust_value_digest": sha256(b"0").hexdigest(), "rationale": "redacted", "expires_on": "2099-01-01"}]}
     assert run(registry=unused).returncode != 0
+
+
+def test_workflow_records_attested_bundle_metadata() -> None:
+    """The attested bundle is independently identifiable after retention."""
+    workflow = (ROOT / ".github/workflows/rust-integration-qualification.yml").read_text()
+
+    assert "semantic-evidence-bundle-metadata.json" in workflow
+    assert "archive_subject_sha256" in workflow
+    assert "archive subject SHA-256; not a GitHub-attestation ID" in workflow
+    assert "retention_days" in workflow
+    tar_command = "tar -czf semantic-evidence-bundle.tar.gz python-semantic-evidence.json rust-semantic-evidence.json semantic-contract-result.txt"
+    assert tar_command in workflow
+    assert "semantic-evidence-bundle-metadata.json" not in tar_command
+    assert workflow.index(tar_command) < workflow.index("sha256sum semantic-evidence-bundle.tar.gz")
+    assert "bundle_sha256=\"$(awk '{print $1}' semantic-evidence-bundle.sha256)\"" in workflow
+    assert '"$bundle_sha256" "$GITHUB_SHA" "$GITHUB_RUN_ID" > semantic-evidence-bundle-metadata.json' in workflow
+    assert "recorded-by-github-attestation" not in workflow
+    assert "subject-path: |\n            semantic-evidence-bundle.tar.gz\n            semantic-evidence-bundle-metadata.json" in workflow
+    assert "semantic-evidence-bundle.sha256" in workflow
+    assert "semantic-evidence-bundle-metadata.json" in workflow
+    assert "retention-days: 90" in workflow
 
 
 def test_canary_validator_requires_durable_runner_proof(tmp_path: Path) -> None:
