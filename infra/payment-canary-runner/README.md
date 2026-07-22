@@ -26,3 +26,15 @@ The durable ledger is an exclusive-lock, fsync-backed state machine: an attempt
 can be claimed once, then released before submission, terminally recorded, or
 marked permanently unknown. A release is historical and cannot be claimed again.
 The external signed-result validator remains the authority for a successful job.
+
+## Composite-digest qualification artifacts
+
+The inactive `paygate-github-protection-v1` profile and its redacted LND/Breez
+golden vectors are repository-local contract artifacts. They define the exact
+canonical bytes and SHA-256 composite used by later checker work; local tests
+verify the profile and vectors without contacting GitHub, a payment backend, or
+any deployed service.
+
+These artifacts do not attest to live infrastructure state and do not enable a
+payment canary. A deployed live-verifier attestation, including its operational
+ownership and signing trust, is deferred to the production-enablement milestone.

@@ -56,14 +56,12 @@ committed environment + runner-group baselines ─> expected composite ─┘
 
 | Modified File/Interface | Consumers | Covered by Work Unit? |
 | --- | --- | --- |
-| `security/payment-canary-composite-digest-profile-v1.json` inactive normative profile (new) | Trusted verifier, checker implementation | W1-01, W2-01 |
+| `security/payment-canary-composite-digest-profile-v1.json` inactive normative profile (new) | Future verifier, checker implementation | W1-01, W2-01 |
 | `security/payment-canary-contract.yaml` active schema-v7 profile/claims | Precondition checker, protected canary jobs, reviewers | W2-01 |
 | `infra/runners/payment-canary-github-audit.json` redacted baseline schema | Precondition checker, infrastructure review | W2-01 |
-| `security/payment-canary-composite-digest-vectors.json` normative vectors (new) | Trusted verifier, checker, tests | W1-01, W2-01 |
-| `infra/runners/payment-canary-verifier-conformance.json` signed rollout evidence (external input) | Conformance validator, Platform Engineering, Wave 2 reviewers | W1-01 |
-| `scripts/check-payment-canary-verifier-conformance.py` conformance gate (new) | Orchestration, Platform Engineering | W1-01 |
-| `tests/test_payment_canary_verifier_conformance.py` signed conformance fixtures (new) | Local conformance gate | W1-01 |
-| `infra/payment-canary-runner/README.md` verifier handoff and rollout order | Platform Engineering | W1-01 |
+| `security/payment-canary-composite-digest-vectors.json` normative vectors (new) | Future verifier, checker, tests | W1-01, W2-01 |
+| `tests/test_payment_canary_verifier_conformance.py` local profile/vector fixtures (new) | Local qualification | W1-01 |
+| `infra/payment-canary-runner/README.md` local-artifact scope and production-attestation deferral | Repository maintainers | W1-01 |
 | `scripts/check-rust-canary-contract.py` strict JSON and expected/live digest comparison | Both protected backend jobs | W2-01 |
 | `tests/platform-smoke/test_wave5_qualification_contracts.py` signed drift fixtures | Local Wave 2 qualification gate | W2-01 |
 | `tests/test_payment_canary_runner.py` existing runner boundary tests | Local Wave 2 qualification gate | W2-01 |
@@ -79,40 +77,28 @@ schema-v7 claim transition. Concurrency remains relevant because the final gate
 must preserve the existing global no-overlap and no-retry properties; this plan
 does not alter the payment execution path.
 
-## Wave 1: Establish Verifier Conformance and Rollout Evidence
+## Wave 1: Establish Local Composite-Digest Qualification
 
-### W1-01: Version the composite profile and qualify the trusted verifier
+### W1-01: Version the repository-local composite profile and vectors
 
-Add an inactive, normative v1 profile document with the literal profile above,
-the future schema-v7 claim names, exact types, canonicalization algorithm, and
-legacy rejection rule. Do not change the active schema-v6 contract or checker in
-this wave. Commit golden LND and Breez vectors containing redacted component
-digests, canonical bytes, and expected composites. The same vectors are the
-conformance interface for the external trusted verifier and repository checker.
+Add an inactive, normative v1 profile document with the literal five-field
+canonical object above, the future schema-v7 claim names, exact types,
+canonicalization algorithm, and legacy rejection rule. Do not change the active
+schema-v6 contract or checker in this wave. Commit redacted LND and Breez golden
+vectors containing component digests, exact canonical bytes, and expected
+composites. These are repository-local contract artifacts for Wave 2 to consume
+directly; they are not a live infrastructure attestation.
 
-Define Platform Engineering ownership and staged rollout in the runner README:
-deploy the composite-capable verifier first; run it against freshly queried live
-GitHub environment and runner-group state in non-paying mode; validate its output
-against the golden vectors and schema; then record a redacted conformance result
-with verifier immutable digest, profile, vector-result digests, observation time,
-and evidence reference. The record is an exact `claims`/`signature` envelope
-signed by the existing infrastructure-attestation trust authority. A dedicated
-validator verifies canonical Ed25519 bytes, configured issuer/key ID, key
-purpose/revocation/validity, the deployed verifier digest, exact profile/vector
-digests and cases, `status: passed`, and an issued/expires window no longer than
-seven days. Do not enable the stricter repository checker or payment capability
-until this command passes. If the verifier cannot be inspected or cannot
-reproduce the vectors, block Wave 1 rather than manufacturing a local PASS.
-
-Keep the audit redacted and exact. Define duplicate JSON keys as invalid for all
-security-sensitive contract inputs. The normative vectors must demonstrate that
-equivalent input key order and whitespace yield the same composite; semantic
-field/value changes must yield a different composite.
+Keep parsing strict: duplicate JSON keys are invalid at every nesting level in
+the profile and vectors. Local tests must prove exact schemas and backend
+coverage, byte-for-byte reproduction, invariance to JSON key ordering and
+insignificant whitespace, and a distinct output for every semantic-field
+mutation. The runner README must state that live-verifier attestation is
+deferred until production enablement; no GitHub inspection, payment, deployment,
+signing key, or external evidence is required for this wave.
 
 **Files:** `security/payment-canary-composite-digest-profile-v1.json` (new),
 `security/payment-canary-composite-digest-vectors.json` (new),
-`infra/runners/payment-canary-verifier-conformance.json` (external signed input),
-`scripts/check-payment-canary-verifier-conformance.py` (new),
 `tests/test_payment_canary_verifier_conformance.py` (new),
 `infra/payment-canary-runner/README.md`
 
@@ -121,45 +107,34 @@ field/value changes must yield a different composite.
 - The inactive v1 profile names `paygate-github-protection-v1`, the literal
   five-field canonical object, serialization rules, SHA-256 encoding, future
   schema-v7 claims, and fail-closed legacy behavior without changing active v6.
-- Golden vectors cover both backends and are reproduced byte-for-byte by both
-  the trusted verifier conformance process and repository checker tests.
+- Redacted LND and Breez vectors exactly reproduce their canonical bytes and
+  composites locally and define the repository-only Wave 2 input.
 - Equivalent object key ordering and insignificant JSON whitespace produce the
   same composite; every semantic field mutation produces a different composite.
-- The audit and vector files contain only redacted IDs/digests, have exact schemas
-  and backend coverage, and prohibit duplicate JSON keys.
-- Platform Engineering supplies canonical Ed25519-signed non-paying conformance
-  evidence for the deployed verifier, including its immutable digest and fresh
-  observation, before checker enforcement is eligible to advance.
-- The conformance validator binds that evidence to the existing infrastructure
-  keyring, exact profile/vector file digests, complete case results, deployed
-  verifier digest, and a validity window no longer than seven days.
+- The profile and vector files have exact schemas, cover both backends, contain
+  no secrets, and reject nested duplicate JSON keys.
 - Completing Wave 1 leaves the active schema-v6 contract/checker pair unchanged
   and coherent; schema v7 activates only in Wave 2.
-- Missing, stale, mismatched, unverifiable, or locally fabricated verifier
-  conformance evidence blocks Wave 1.
+- Documentation clearly defers live-verifier attestation to production
+  enablement, so it does not block local qualification.
 
-**Error handling:** Unknown profiles, malformed vectors, duplicate keys,
-non-reproducible composites, missing/invalid/revoked signature, wrong-purpose or
-expired key, verifier/file digest mismatch, incomplete cases, absent live API
-inspection, or stale conformance evidence block rollout. No repository fixture
-can substitute for the external signed non-paying observation.
+**Error handling:** Unknown profiles, malformed profile/vector schemas,
+duplicate keys, unsupported backends, invalid digests, missing canonical bytes,
+or non-reproducible composites fail local validation. This Wave neither queries
+live GitHub state nor treats repository fixtures as production attestation.
 
-**Tests:** Golden-vector generation/verification and ephemeral-key black-box
-tests for the conformance validator; no payment or secret-bearing fixtures.
+**Tests:** Pure local golden-vector/profile tests; no external APIs, subprocesses,
+signing keys, conformance command, payments, or secret-bearing fixtures.
 
 **Test spec:**
 
-- Reproduce both golden composites from their semantic objects and exact
-  canonical bytes.
+- Reproduce both golden composites from semantic objects and exact canonical
+  bytes.
 - Permute input key order and whitespace and prove invariance; mutate profile,
   repository, backend, either component digest, case, or value and prove change.
-- Feed the vectors to the deployed verifier conformance command and retain only
-  redacted outcome digests plus immutable verifier identity.
-- Sign a valid conformance envelope with an ephemeral Ed25519 key and assert the
-  validator passes; mutate signature, issuer/key, revocation/validity, profile,
-  verifier digest, profile/vector file digests, case coverage/status, and
-  issued/expires window independently and assert failure.
-- Present absent or failed external evidence and confirm Wave 1 remains blocked.
+- Reject duplicate keys, including nested profile and vector keys, and reject
+  malformed schemas or incomplete backend coverage.
+- Assert the active schema-v6 contract and checker remain outside Wave 1.
 
 ## Wave 2: Enforce Drift Rejection and Complete Qualification
 
@@ -237,9 +212,9 @@ existing runner boundary tests; locked/offline Rust artifact inspection.
 
 ## NOT in Scope
 
-- Changing live GitHub environments, runner groups, reviewers, or secrets; the
-  plan requires Platform Engineering verifier conformance evidence but does not
-  authorize those live mutations.
+- Changing live GitHub environments, runner groups, reviewers, or secrets.
+  Wave 1 is repository-only and neither requires nor authorizes a deployed
+  verifier, live inspection, immutable deployment digest, or signed evidence.
 - Executing LND/Breez payments or treating fake adapters as production evidence.
 - Wave 3 candidate aggregation, Wave 5 checkpoint advancement, deployment, or
   release publication; those begin only after Wave 2 independently passes.
@@ -248,21 +223,22 @@ existing runner boundary tests; locked/offline Rust artifact inspection.
 
 ## Security Considerations
 
-The committed audit and signed live attestation are different authorities: the
-audit defines reviewed expected state, while the verifier proves freshly
-observed state. Golden vectors and staged producer conformance prevent the
-checker from silently adopting a digest meaning the deployed verifier does not
-produce. The composite binds both the backend-specific environment and shared
-runner group, is versioned to prevent ambiguous canonicalization, and remains
-covered by the existing Ed25519 signature. Duplicate-aware decoding prevents
-last-key-wins ambiguity. Tests use ephemeral keys and synthetic redacted data
-only; failure output never echoes signed payloads or infrastructure identifiers.
+Wave 2 preserves the separation between the committed audit, which defines the
+reviewed expected state, and its signed attestation input. Golden vectors keep
+the local checker from silently adopting an ambiguous digest meaning. A deployed
+verifier producing freshly observed state is production hardening deferred until
+actual payment enablement. The composite binds both the backend-specific
+environment and shared runner group, is versioned to prevent ambiguous
+canonicalization, and remains covered by the existing Ed25519 signature.
+Duplicate-aware decoding prevents last-key-wins ambiguity. Tests use ephemeral
+keys and synthetic redacted data only; failure output never echoes signed
+payloads or infrastructure identifiers.
 
 ## Failure Modes Summary
 
 | Codepath | Failure Mode | Handled In | Tested? |
 | --- | --- | --- | --- |
-| Verifier rollout | Producer lacks v1 profile, trusted signature, freshness, or vector parity | W1-01 signed conformance validator blocks strict checker | Yes |
+| Production verifier rollout | Live attestation lacks v1 profile, trusted signature, freshness, or vector parity | Deferred until production payment enablement | No — intentionally outside Wave 1 |
 | Audit parsing | Duplicate key, missing backend, extra field, malformed digest | W2-01 duplicate-aware exact schema validation | Yes |
 | Composite derivation | Wrong backend or profile ambiguity | W1-01 vectors + W2-01 canonical helper | Yes |
 | Live comparison | Environment or runner-group drift | W2-01 exact signed composite equality | Yes |
@@ -275,13 +251,8 @@ only; failure output never echoes signed payloads or infrastructure identifiers.
 
 ### Auto-Incorporated
 
-- Added producer conformance and staged rollout as a blocking prerequisite; a
-  checker-only change cannot complete Wave 2.
 - Kept Wave 1 profile/vectors non-active so schema-v6 remains coherent, then
   moved schema-v7 activation atomically beside checker enforcement in Wave 2.
-- Defined signed conformance evidence, existing infrastructure-keyring trust,
-  deployed-verifier/file digest binding, seven-day maximum validity, and an
-  executable blocking validator instead of trusting a committed JSON shape.
 - Defined the exact five-field v1 canonical object and new versioned attestation
   claims; legacy attestations fail closed under contract schema v7.
 - Required duplicate-aware JSON parsing across every security-sensitive input.
@@ -292,21 +263,21 @@ only; failure output never echoes signed payloads or infrastructure identifiers.
 
 ### Deferred
 
-- Live GitHub configuration mutations and paying protected-runner smoke remain
-  external operations; non-paying verifier conformance evidence is required in
-  Wave 1 and cannot be deferred past Wave 2 qualification.
+- Live GitHub configuration mutations, deployed-verifier rollout, live
+  attestation, and paying protected-runner smoke remain production-hardening
+  work until actual production payment enablement; none block Wave 1.
 
 ## Confidence Assessment
 
 | Dimension | Score | Source | Notes |
 | --- | --- | --- | --- |
-| Requirements | 0.95 | Original W2-01 plan, final reviewer, architect | Checker and producer-side gates are explicit |
+| Requirements | 0.95 | Original W2-01 plan, final reviewer, architect | Wave boundaries and checker gate are explicit |
 | Architecture | 0.94 | Existing attestation/audit split + delta review | Non-active profile then atomic activation preserves coherence |
-| Codebase fit | 0.92 | Existing checker, audit, contract, and tests | Adds two small evidence artifacts and one external gate |
-| Testability | 0.94 | Ephemeral signatures, golden vectors, offline Cargo | Live conformance remains a signed external blocking artifact |
-| Security | 0.93 | Signed conformance, duplicate-aware parsing, exact digest binding | Trust anchors and redacted outputs are explicit |
-| Migration | 0.91 | Architect-reviewed verifier-first sequencing | Active v6 remains coherent until atomic v7 activation |
-| Overall | 0.94 | Weighted assessment | Above confidence gate; external conformance is explicit |
+| Codebase fit | 0.92 | Existing checker, audit, contract, and tests | Adds local profile/vector artifacts without new infrastructure |
+| Testability | 0.94 | Ephemeral signatures, golden vectors, offline Cargo | Wave 1 is fully repository-local; Wave 2 retains targeted validation |
+| Security | 0.93 | Signed Wave 2 claims, duplicate-aware parsing, exact digest binding | Trust anchors and redacted outputs are explicit |
+| Migration | 0.91 | Architect-reviewed Wave 1-to-Wave 2 sequencing | Active v6 remains coherent until atomic v7 activation |
+| Overall | 0.94 | Weighted assessment | Above confidence gate; production attestation is explicitly deferred |
 
 ## Orchestration Playbook
 
