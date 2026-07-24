@@ -128,11 +128,10 @@ def validate_index(value, publication_epoch):
     if accepted > publication_epoch:
         fail("index acceptance time is in the future at publication")
     records = value["records"]
-    if not isinstance(records, list) or len(records) != 7:
-        fail("index requires exactly seven records")
+    if not isinstance(records, list) or len(records) != 6:
+        fail("index requires exactly six records")
     expected_ids = {
         "integration",
-        "canary:lnd-testnet-canary",
         "canary:breez-mainnet-canary",
     } | {"native:" + target for target in TARGETS}
     seen = set()

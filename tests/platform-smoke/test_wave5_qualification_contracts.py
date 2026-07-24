@@ -840,10 +840,9 @@ def _wave5_candidate_fixture(tmp_path: Path) -> Path:
             }
         )
     for backend, runner in (
-        ("lnd-testnet-canary", "approved-lnd-runner-v1"),
         ("breez-mainnet-canary", "approved-breez-runner-v1"),
     ):
-        run = "303" if backend.startswith("lnd") else "404"
+        run = "404"
         record = {
             "backend": backend,
             "source_commit": source,
@@ -948,7 +947,7 @@ def _wave5_candidate_fixture(tmp_path: Path) -> Path:
                 "status": "succeeded",
                 "backend": backend,
                 "workflow": "rust-payment-canary.yml",
-                "workflow_run_id": "303" if backend.startswith("lnd") else "404",
+                "workflow_run_id": "404",
                 "source_commit": source,
                 "cargo_lock_sha256": lock,
                 "source_run": {
@@ -1007,7 +1006,6 @@ def test_wave5_candidate_validator_accepts_exact_complete_fixture_and_rejects_ta
     accepted = json.loads(first)
     assert [record["id"] for record in accepted["records"]] == [
         "canary:breez-mainnet-canary",
-        "canary:lnd-testnet-canary",
         "integration",
         "native:aarch64-apple-darwin",
         "native:aarch64-unknown-linux-gnu",
@@ -1200,7 +1198,8 @@ def test_wave5_acceptance_workflow_is_read_only_and_uses_explicit_historical_run
     assert "contents: read" in workflow
     assert "attestations: read" in workflow
     assert "integration_run_id" in workflow and "native_run_id" in workflow
-    assert "lnd_canary_run_id" in workflow and "breez_canary_run_id" in workflow
+    assert "lnd_canary_run_id" not in workflow
+    assert "breez_canary_run_id" in workflow
     assert "run-id:" in workflow
     assert "wave5-candidate-acceptance-${{ github.run_id }}" in workflow
     assert "check-rust-wave5-candidate.py" in workflow
@@ -1353,7 +1352,7 @@ def test_wave5_qualification_report_requires_exact_pending_or_accepted_layout(
                 },
             }
         )
-    for number, backend in ((6, "lnd-testnet-canary"), (7, "breez-mainnet-canary")):
+    for number, backend in ((6, "breez-mainnet-canary"),):
         records.append(
             {
                 "id": "canary:" + backend,
@@ -1574,7 +1573,7 @@ def test_wave5_qualification_report_requires_exact_pending_or_accepted_layout(
         ("integration", "metadata_sha256"),
         ("native:x86_64-unknown-linux-gnu", "bundle_sha256"),
         ("native:x86_64-unknown-linux-gnu", "runtime_evidence_sha256"),
-        ("canary:lnd-testnet-canary", "result_sha256"),
+        ("canary:breez-mainnet-canary", "result_sha256"),
     ]
     for record_id, field in digest_fields:
         malformed = deepcopy(value)
@@ -1613,7 +1612,7 @@ def test_wave5_qualification_report_requires_exact_pending_or_accepted_layout(
             canary = next(
                 record
                 for record in malformed["records"]
-                if record["id"] == "canary:lnd-testnet-canary"
+                if record["id"] == "canary:breez-mainnet-canary"
             )
             canary["provenance"][field] = identifier
             materialize(malformed)
@@ -1625,7 +1624,7 @@ def test_wave5_qualification_report_requires_exact_pending_or_accepted_layout(
         {
             "schema_version": 1,
             "repository": repository,
-            "records": [{"id": "PLACEHOLDER"}] * 7,
+            "records": [{"id": "PLACEHOLDER"}] * 6,
         },
         sort_keys=True,
         separators=(",", ":"),

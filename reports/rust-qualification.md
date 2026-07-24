@@ -68,14 +68,14 @@ it is not an acceptance record and does not change the blocked cutover status.
 
 When all qualification work has actually completed, reviewers must index the
 single accepted `wave5-candidate-manifest.json` here with its SHA-256 and the
-exact GitHub Actions URLs/run IDs for all seven evidence records:
+exact GitHub Actions URLs/run IDs for all six evidence records:
 
 | Evidence class | Required run | Current evidence |
 | --- | --- | --- |
 | Local structural contract tests | local command output | PASS only for offline structure; not native, integration, or payment proof |
 | Integration semantic bundle | `rust-integration-qualification.yml` run ID | Pending |
 | Native aggregate | `rust-platform.yml` run ID, all four targets | Pending |
-| LND protected canary | `rust-payment-canary.yml` LND run ID | Pending; requires explicit protected-environment approval |
+| LND protected canary | Not required | Excluded: Voltage is unavailable and LNBits cannot act as payer |
 | Breez protected canary | `rust-payment-canary.yml` Breez run ID | Pending; requires separate explicit protected-environment approval |
 | Candidate acceptance | `rust-wave5-acceptance.yml` run ID and manifest SHA-256 | Pending |
 
@@ -89,7 +89,7 @@ as PASS in this report.
 Post-acceptance publication must follow
 [`docs/wave5-evidence-publication.md`](../docs/wave5-evidence-publication.md).
 The cutover checkpoint remains blocked until the real integration, four-target
-native, LND canary, and Breez canary runs succeed; candidate acceptance and both
+native and Breez canary runs succeed; candidate acceptance and both
 independent reviews complete; explicit docs-only commit approval is recorded;
 and the exact published report passes the report verifier. The immutable
 acceptance artifact remains authoritative; this source-controlled report is

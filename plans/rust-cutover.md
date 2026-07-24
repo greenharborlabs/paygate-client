@@ -181,13 +181,14 @@ expensive qualification once per integration candidate.
   `Cargo.lock` during a network-enabled preparation step, then build with
   `--locked --offline`; Linux additionally runs the build container with
   networking disabled.
-- Run an LND testnet canary and the bounded Breez Mainnet canary only after
-  explicit approval. Preserve the existing fee/spend caps and never retry an
-  ambiguous attempt.
+- Run only the bounded Breez Mainnet canary after explicit approval. LND canary
+  qualification is excluded because the Voltage payer is no longer available
+  and LNBits cannot serve as the payer. Preserve the existing fee/spend cap and
+  never retry an ambiguous attempt.
 
 **Acceptance:** One source/lock identity passes every required local and native
-gate, all four evidence records aggregate successfully, and the approved
-canaries return invoice-bound proofs without redaction or state anomalies.
+gate, all four evidence records aggregate successfully, and the approved Breez
+canary returns invoice-bound proof without redaction or state anomalies.
 
 ## Wave 6: Migration and GitHub Release
 

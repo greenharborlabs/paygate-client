@@ -16,7 +16,7 @@ TARGETS = {
     "x86_64-apple-darwin",
     "aarch64-apple-darwin",
 }
-BACKENDS = {"lnd-testnet-canary", "breez-mainnet-canary"}
+REQUIRED_CANARY_BACKENDS = {"breez-mainnet-canary"}
 SHA256, COMMIT = re.compile(r"[0-9a-f]{64}"), re.compile(r"[0-9a-f]{40}")
 DIGEST_SCOPE = "archive subject SHA-256; not a GitHub-attestation ID"
 WORKFLOWS = {
@@ -374,8 +374,8 @@ def validate(
     if seen != TARGETS:
         fail("native: incomplete target set")
     canaries = candidate["canary_records"]
-    if not isinstance(canaries, list) or len(canaries) != 2:
-        fail("candidate: exactly two canary records are required")
+    if not isinstance(canaries, list) or len(canaries) != 1:
+        fail("candidate: exactly one Breez canary record is required")
     seen = set()
     for record in canaries:
         record = exact(
@@ -407,7 +407,10 @@ def validate(
         ):
             fail("canary: invalid record")
         identity(record, source, lock, rid, "canary")
-        if record["backend"] not in BACKENDS or record["backend"] in seen:
+        if (
+            record["backend"] not in REQUIRED_CANARY_BACKENDS
+            or record["backend"] in seen
+        ):
             fail("canary: unknown or duplicate backend")
         seen.add(record["backend"])
         artifact = file_binding(record["artifact"], root, "canary artifact")
@@ -472,7 +475,7 @@ def validate(
                 },
             }
         )
-    if seen != BACKENDS:
+    if seen != REQUIRED_CANARY_BACKENDS:
         fail("canary: incomplete backend set")
     records.sort(key=lambda item: item["id"])
     return {

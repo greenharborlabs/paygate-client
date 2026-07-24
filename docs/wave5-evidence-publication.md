@@ -97,7 +97,7 @@ people who are independent of the operator and of each other:
 1. An independent integration reviewer must accept the integration and all
    four native records, source/lock binding, attestations, run identity, and
    freshness.
-2. An independent security reviewer must accept both signed canary records,
+2. An independent security reviewer must accept the signed Breez canary record,
    durable receipts, runner/key identity, redaction, non-ambiguity, manifest
    integrity, and freshness.
 
@@ -176,7 +176,7 @@ invalid, ambiguous, or expired evidence.
 ## Checkpoint rule
 
 The Wave 5 checkpoint remains blocked until all real integration, four-target
-native, LND canary, and Breez canary runs have completed successfully; the
+native and Breez canary runs have completed successfully; the
 candidate has been accepted into the immutable acceptance artifact; the
 independent integration and security reviewers have signed off; explicit
 docs-only commit approval has been received; and the exact report publication
