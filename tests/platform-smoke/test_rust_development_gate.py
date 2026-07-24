@@ -11,6 +11,7 @@ def test_rust_pr_workflow_runs_only_the_balanced_development_gate() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     assert "  development-gate:" in workflow
+    assert "cargo +1.88.0 fetch --locked" in workflow
     assert "cargo +1.88.0 fmt --check" in workflow
     assert (
         "CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline "

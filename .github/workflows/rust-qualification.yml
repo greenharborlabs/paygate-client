@@ -31,6 +31,8 @@ jobs:
         run: >-
           rustup toolchain install 1.88.0 --profile minimal
           --component rustfmt --component clippy
+      - name: Prime locked Rust dependency cache
+        run: cargo +1.88.0 fetch --locked
       - name: Run the balanced Wave 2 development gate
         shell: bash
         env:
