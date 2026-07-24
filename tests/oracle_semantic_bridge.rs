@@ -328,29 +328,46 @@ fn run_case(case_id: &str, args: &[&str]) -> Value {
 }
 
 fn validate_compiled_case_contract(cases: &serde_json::Map<String, Value>) {
-    assert_eq!(cases.len(), CASE_IDS.len(), "unexpected semantic case count");
+    assert_eq!(
+        cases.len(),
+        CASE_IDS.len(),
+        "unexpected semantic case count"
+    );
     for case_id in CASE_IDS {
         let case = cases.get(case_id).expect("missing semantic case");
         let object = case.as_object().expect("semantic case must be an object");
         assert!(
-            has_exact_fields(object, &["argv", "stdout_json", "exit_code", "stderr_class", "state"]),
+            has_exact_fields(
+                object,
+                &["argv", "stdout_json", "exit_code", "stderr_class", "state"]
+            ),
             "unexpected semantic case fields"
         );
         assert_eq!(object["stderr_class"], "empty");
-        assert!(object["argv"].as_array().is_some_and(|args| args.contains(&json!("<TEST_CACHE>"))));
+        assert!(
+            object["argv"]
+                .as_array()
+                .is_some_and(|args| args.contains(&json!("<TEST_CACHE>")))
+        );
         let expected_zero = case_id != "credentials.show_missing";
         assert_eq!(object["exit_code"].as_i64() == Some(0), expected_zero);
     }
     assert!(has_exact_fields(
-        cases["credentials.list.success"]["stdout_json"].as_object().expect("list stdout"),
+        cases["credentials.list.success"]["stdout_json"]
+            .as_object()
+            .expect("list stdout"),
         &["ok", "credentials"],
     ));
     assert!(has_exact_fields(
-        cases["credentials.show_state"]["stdout_json"].as_object().expect("show stdout"),
+        cases["credentials.show_state"]["stdout_json"]
+            .as_object()
+            .expect("show stdout"),
         &["ok", "credential"],
     ));
     assert!(has_exact_fields(
-        cases["credentials.show_missing"]["stdout_json"].as_object().expect("missing stdout"),
+        cases["credentials.show_missing"]["stdout_json"]
+            .as_object()
+            .expect("missing stdout"),
         &["ok", "error"],
     ));
 }
@@ -384,17 +401,24 @@ fn evidence_pre_state_is_parsed_from_the_written_private_cache() {
     let root = private_dir();
     let cache = root.join("credentials.json");
     let mut fixture_only = execution_state();
-    fs::write(&cache, serde_json::to_vec(&fixture_only).expect("state JSON"))
-        .expect("write private state");
+    fs::write(
+        &cache,
+        serde_json::to_vec(&fixture_only).expect("state JSON"),
+    )
+    .expect("write private state");
 
     // Change the fixture after writing. The evidence source is the just-written
     // private file, so this in-memory mutation must not affect the projection.
     fixture_only["credentials"][0]["id"] = json!("mutated-in-memory-fixture");
-    let parsed_before: Value = serde_json::from_slice(&fs::read(&cache).expect("read private state"))
-        .expect("private state JSON");
+    let parsed_before: Value =
+        serde_json::from_slice(&fs::read(&cache).expect("read private state"))
+            .expect("private state JSON");
     let before = safe_state(&parsed_before).expect("safe private state");
     assert_eq!(before["credentials"][0]["id"], "fixture-id");
-    assert_ne!(before, safe_state(&fixture_only).expect("safe fixture projection"));
+    assert_ne!(
+        before,
+        safe_state(&fixture_only).expect("safe fixture projection")
+    );
     let _ = fs::remove_dir_all(root);
 }
 

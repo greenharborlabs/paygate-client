@@ -28,7 +28,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust 1.88.0
-        run: rustup toolchain install 1.88.0 --profile minimal
+        run: >-
+          rustup toolchain install 1.88.0 --profile minimal
+          --component rustfmt --component clippy
       - name: Run the balanced Wave 2 development gate
         shell: bash
         env:

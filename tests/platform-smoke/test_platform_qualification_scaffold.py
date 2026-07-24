@@ -66,7 +66,11 @@ def test_qualification_matrix_uses_available_native_hosted_runners() -> None:
     assert (ROOT / "Cargo.toml").is_file()
     assert (ROOT / "Cargo.lock").is_file()
     assert 'cargo +1.88.0 fetch --locked' in workflow
-    assert 'cargo build --locked --offline --release --target "$TARGET"' in workflow
+    assert 'cargo build --locked --offline --release --target "$1"' in workflow
+    assert (
+        'cargo +1.88.0 build --locked --offline --release --target "$TARGET"'
+        in workflow
+    )
     assert 'docker run --rm --network none' in workflow
     assert "cargo vendor" not in workflow
 

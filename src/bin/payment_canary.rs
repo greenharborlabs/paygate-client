@@ -9,8 +9,12 @@ fn main() {
     }
     // The runner deliberately does not accept backend, invoice, credential, or cap
     // selection from this probe.  Keep the output a fixed, non-sensitive intent.
-    if request.contains("invoice") || request.contains("preimage") || request.contains("credential")
-        || request.contains("backend") || request.contains("cap") {
+    if request.contains("invoice")
+        || request.contains("preimage")
+        || request.contains("credential")
+        || request.contains("backend")
+        || request.contains("cap")
+    {
         std::process::exit(2);
     }
     println!("{{\"qualification_request\":\"candidate-probe-v1\"}}");
