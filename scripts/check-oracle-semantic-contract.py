@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fail-closed comparator for independent Python and compiled-CLI evidence."""
+
 import argparse
 import datetime as dt
 import hashlib
@@ -8,17 +9,35 @@ import re
 import sys
 from pathlib import Path
 
-CASE_IDS = ("credentials.list.success", "credentials.show_missing", "credentials.show_state")
+CASE_IDS = (
+    "credentials.list.success",
+    "credentials.show_missing",
+    "credentials.show_state",
+)
 CASE_FIELDS = {"argv", "stdout_json", "exit_code", "stderr_class", "state"}
 STATE_FIELDS = {
-    "id", "scope", "authorization", "createdAt", "expiresAt", "maxUses",
-    "useCount", "lastSuccessAt", "lastRejectedAt", "paymentHash", "challengeId",
+    "id",
+    "scope",
+    "authorization",
+    "createdAt",
+    "expiresAt",
+    "maxUses",
+    "useCount",
+    "lastSuccessAt",
+    "lastRejectedAt",
+    "paymentHash",
+    "challengeId",
     "secretStorage",
 }
 PUBLIC_CREDENTIAL_FIELDS = STATE_FIELDS - {"secretStorage"}
 SCOPE_FIELDS = {
-    "namespace", "requestKey", "originHost", "service", "protocol",
-    "payerBackend", "policyHash",
+    "namespace",
+    "requestKey",
+    "originHost",
+    "service",
+    "protocol",
+    "payerBackend",
+    "policyHash",
 }
 APPROVABLE_PATHS = {f"/{field}" for field in CASE_FIELDS}
 HASH = re.compile(r"^[0-9a-f]{64}$")
@@ -89,7 +108,11 @@ def validate_stdout(case_id: str, value: object) -> None:
     if not isinstance(value, dict):
         raise ContractError("malformed CLI evidence")
     if case_id == "credentials.list.success":
-        if set(value) != {"ok", "credentials"} or value.get("ok") is not True or not isinstance(value.get("credentials"), list):
+        if (
+            set(value) != {"ok", "credentials"}
+            or value.get("ok") is not True
+            or not isinstance(value.get("credentials"), list)
+        ):
             raise ContractError("malformed CLI evidence")
         for credential in value["credentials"]:
             validate_public_credential(credential)
@@ -189,7 +212,11 @@ def parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    oracle, rust, registry = load(args.oracle), load(args.rust_evidence), load(args.registry)
+    oracle, rust, registry = (
+        load(args.oracle),
+        load(args.rust_evidence),
+        load(args.registry),
+    )
     validate_record(oracle, False)
     validate_record(rust, True)
     expected = {
@@ -261,4 +288,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except ContractError as exc:
         print(f"oracle semantic contract: FAIL: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc

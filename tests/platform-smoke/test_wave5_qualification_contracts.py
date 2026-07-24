@@ -638,8 +638,9 @@ def test_canary_control_plane_uses_literal_attempt_keys_and_preflight_guards() -
     inventory = json.loads((ROOT / "infra/runners/payment-canary.yml").read_text())
 
     assert (
-        'return ":".join((a.source_commit,a.cargo_lock_sha256,'
-        "a.backend,a.workflow_run_id))" in runner
+        'return ":".join(\n'
+        "        (a.source_commit, a.cargo_lock_sha256, a.backend, a.workflow_run_id)\n"
+        "    )" in runner
     )
     assert "def validate_protected_path" in runner
     assert "os.lstat(current)" in runner
@@ -839,9 +840,7 @@ def _wave5_candidate_fixture(tmp_path: Path) -> Path:
                 },
             }
         )
-    for backend, runner in (
-        ("breez-mainnet-canary", "approved-breez-runner-v1"),
-    ):
+    for backend, runner in (("breez-mainnet-canary", "approved-breez-runner-v1"),):
         run = "404"
         record = {
             "backend": backend,

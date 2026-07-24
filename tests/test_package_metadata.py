@@ -37,20 +37,30 @@ def test_rust_payment_canary_is_qualification_only_and_not_default_binary() -> N
     assert 'default-run = "paygate"' in manifest
     assert 'name = "payment_canary"' in manifest
     assert 'required-features = ["payment-canary-qualification"]' in manifest
-    assert 'payment-canary-qualification = []' in manifest
+    assert "payment-canary-qualification = []" in manifest
 
 
 def test_locked_offline_release_build_excludes_payment_canary_artifact() -> None:
     """The default release artifact must never contain the qualification-only binary."""
     with tempfile.TemporaryDirectory(prefix="paygate-rust-artifact-") as target:
-        environment = {**os.environ, "CARGO_TARGET_DIR": target, "CARGO_NET_OFFLINE": "true"}
+        environment = {
+            **os.environ,
+            "CARGO_TARGET_DIR": target,
+            "CARGO_NET_OFFLINE": "true",
+        }
         subprocess.run(
             ["cargo", "+1.88.0", "build", "--locked", "--offline", "--release"],
-            cwd=ROOT, check=True, capture_output=True, text=True, env=environment,
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=environment,
         )
         release = Path(target) / "release"
         assert (release / ("paygate.exe" if os.name == "nt" else "paygate")).is_file()
-        assert not (release / ("payment_canary.exe" if os.name == "nt" else "payment_canary")).exists()
+        assert not (
+            release / ("payment_canary.exe" if os.name == "nt" else "payment_canary")
+        ).exists()
 
 
 def _run(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:

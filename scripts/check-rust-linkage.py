@@ -9,8 +9,14 @@ import sys
 from pathlib import Path
 
 LINUX_LIBS = {
-    "libc.so.6", "libdl.so.2", "libgcc_s.so.1", "libm.so.6", "libpthread.so.0",
-    "librt.so.1", "ld-linux-x86-64.so.2", "ld-linux-aarch64.so.1",
+    "libc.so.6",
+    "libdl.so.2",
+    "libgcc_s.so.1",
+    "libm.so.6",
+    "libpthread.so.0",
+    "librt.so.1",
+    "ld-linux-x86-64.so.2",
+    "ld-linux-aarch64.so.1",
 }
 MAC_PATHS = {
     "/usr/lib/libSystem.B.dylib",
@@ -65,7 +71,9 @@ def parse_macos(text: str) -> None:
         path = line.strip().split(" (compatibility", 1)[0]
         if path not in MAC_PATHS:
             raise ValueError(f"unlisted macOS dependency: {path}")
-        if path.startswith(("@rpath", "@loader_path", "@executable_path", "/opt/", "/nix/", "/Users/")):
+        if path.startswith(
+            ("@rpath", "@loader_path", "@executable_path", "/opt/", "/nix/", "/Users/")
+        ):
             raise ValueError("non-system macOS dependency")
 
 
@@ -75,7 +83,11 @@ def output(*args: str) -> str:
 
 def inspect(target: str, binary: str) -> None:
     if target.endswith("linux-gnu"):
-        loader = "ld-linux-x86-64.so.2" if target.startswith("x86_64") else "ld-linux-aarch64.so.1"
+        loader = (
+            "ld-linux-x86-64.so.2"
+            if target.startswith("x86_64")
+            else "ld-linux-aarch64.so.1"
+        )
         parse_linux(output("ldd", binary), loader)
         parse_glibc(output("readelf", "--version-info", binary))
     elif target.endswith("apple-darwin"):
@@ -92,13 +104,25 @@ def inspect(target: str, binary: str) -> None:
 
 
 def self_test() -> None:
-    permitted_linux = """linux-vdso.so.1 (0x0)\nlibgcc_s.so.1 => /lib/aarch64-linux-gnu/libgcc_s.so.1 (0x0)\nlibc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x0)\n/lib/ld-linux-aarch64.so.1 (0x0)"""
+    permitted_linux = (
+        "linux-vdso.so.1 (0x0)\n"
+        "libgcc_s.so.1 => /lib/aarch64-linux-gnu/libgcc_s.so.1 (0x0)\n"
+        "libc.so.6 => /lib/aarch64-linux-gnu/libc.so.6 (0x0)\n"
+        "/lib/ld-linux-aarch64.so.1 (0x0)"
+    )
     parse_linux(permitted_linux, "ld-linux-aarch64.so.1")
     parse_glibc("Name: GLIBC_2.17 Name: GLIBC_2.31")
-    permitted_mac = "x:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n\t/System/Library/Frameworks/Security.framework/Versions/A/Security (compatibility version 1.0.0)"
+    permitted_mac = (
+        "x:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n"
+        "\t/System/Library/Frameworks/Security.framework/Versions/A/Security "
+        "(compatibility version 1.0.0)"
+    )
     parse_macos(permitted_mac)
     for function, fixture in [
-        (lambda value: parse_linux(value, "ld-linux-x86-64.so.2"), "libssl.so.3 => /opt/homebrew/lib/libssl.so.3 (0x0)"),
+        (
+            lambda value: parse_linux(value, "ld-linux-x86-64.so.2"),
+            "libssl.so.3 => /opt/homebrew/lib/libssl.so.3 (0x0)",
+        ),
         (parse_glibc, "Name: GLIBC_2.32"),
         (parse_macos, "x:\n\t@rpath/libsqlite.dylib (compatibility version 1.0.0)"),
     ]:

@@ -8,9 +8,23 @@ import re
 import sys
 
 ALLOWED_LICENSES = {
-    "0BSD", "Apache-2.0", "BSD-1-Clause", "BSD-2-Clause", "BSD-3-Clause",
-    "BSL-1.0", "CC0-1.0", "CDLA-Permissive-2.0", "ISC", "LGPL-2.1-or-later",
-    "MIT", "MIT-0", "MITNFA", "MPL-2.0", "Unicode-3.0", "Unlicense", "Zlib",
+    "0BSD",
+    "Apache-2.0",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "MIT-0",
+    "MITNFA",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
 }
 LEGACY_NORMALIZATIONS = {
     "Apache-2.0 / MIT": "Apache-2.0 OR MIT",
@@ -118,17 +132,23 @@ def check_package(package: dict[str, object]) -> tuple[str, str, str] | None:
     if "license" not in package or license_expression is None:
         name, version, source = identity
         if not all(isinstance(component, str) for component in identity):
-            raise ValueError(f"unclassified missing license metadata: {format_identity(identity)}")
+            raise ValueError(
+                f"unclassified missing license metadata: {format_identity(identity)}"
+            )
         typed_identity = (name, version, source)
         if typed_identity not in MISSING_LICENSE_EXCEPTION_SET:
-            raise ValueError(f"unclassified missing license metadata: {format_identity(identity)}")
+            raise ValueError(
+                f"unclassified missing license metadata: {format_identity(identity)}"
+            )
         return typed_identity
     if not isinstance(license_expression, str) or not license_expression.strip():
         raise ValueError(f"invalid license metadata: {format_identity(identity)}")
     try:
         Parser(license_expression).parse()
     except ValueError as error:
-        raise ValueError(f"unclassified license metadata: {format_identity(identity)}: {error}") from error
+        raise ValueError(
+            f"unclassified license metadata: {format_identity(identity)}: {error}"
+        ) from error
     return None
 
 
@@ -146,29 +166,54 @@ def check_metadata(path: str) -> None:
     check_missing_license_completeness(observed_missing)
 
 
-def check_missing_license_completeness(observed_missing: list[tuple[str, str, str]]) -> None:
+def check_missing_license_completeness(
+    observed_missing: list[tuple[str, str, str]],
+) -> None:
     observed_set = frozenset(observed_missing)
     if len(observed_set) != len(observed_missing):
-        duplicates = sorted(identity for identity in observed_set if observed_missing.count(identity) > 1)
-        raise ValueError("duplicate missing-license metadata identities: " + "; ".join(map(format_identity, duplicates)))
+        duplicates = sorted(
+            identity
+            for identity in observed_set
+            if observed_missing.count(identity) > 1
+        )
+        raise ValueError(
+            "duplicate missing-license metadata identities: "
+            + "; ".join(map(format_identity, duplicates))
+        )
     if observed_set != MISSING_LICENSE_EXCEPTION_SET:
         missing = sorted(MISSING_LICENSE_EXCEPTION_SET - observed_set)
         stale = sorted(observed_set - MISSING_LICENSE_EXCEPTION_SET)
         details = []
         if missing:
-            details.append("allowlist identities absent from metadata: " + "; ".join(map(format_identity, missing)))
+            details.append(
+                "allowlist identities absent from metadata: "
+                + "; ".join(map(format_identity, missing))
+            )
         if stale:
-            details.append("new unlicensed metadata identities: " + "; ".join(map(format_identity, stale)))
-        raise ValueError("missing-license allowlist completeness failure: " + " | ".join(details))
+            details.append(
+                "new unlicensed metadata identities: "
+                + "; ".join(map(format_identity, stale))
+            )
+        raise ValueError(
+            "missing-license allowlist completeness failure: " + " | ".join(details)
+        )
 
 
 def self_test() -> None:
     for expression in [
-        "MIT OR Apache-2.0", "(Apache-2.0 OR MIT) AND BSD-3-Clause",
-        "Apache-2.0 WITH LLVM-exception OR MIT", "MIT/Apache-2.0",
+        "MIT OR Apache-2.0",
+        "(Apache-2.0 OR MIT) AND BSD-3-Clause",
+        "Apache-2.0 WITH LLVM-exception OR MIT",
+        "MIT/Apache-2.0",
     ]:
         Parser(expression).parse()
-    for expression in ["AGPL-3.0", "MIT OR Proprietary", "MIT WITH LLVM-exception", "MIT OR", "(MIT"]:
+    for expression in [
+        "AGPL-3.0",
+        "MIT OR Proprietary",
+        "MIT WITH LLVM-exception",
+        "MIT OR",
+        "(MIT",
+    ]:
         try:
             Parser(expression).parse()
         except ValueError:
@@ -177,40 +222,75 @@ def self_test() -> None:
             raise AssertionError(f"unsafe expression accepted: {expression}")
     for identity in MISSING_LICENSE_EXCEPTIONS:
         name, version, source = identity
-        package: dict[str, object] = {"name": name, "version": version, "source": source, "license": None}
+        package: dict[str, object] = {
+            "name": name,
+            "version": version,
+            "source": source,
+            "license": None,
+        }
         if check_package(package) != identity:
-            raise AssertionError(f"allowlisted identity rejected: {format_identity(identity)}")
-        if check_package({key: value for key, value in package.items() if key != "license"}) != identity:
-            raise AssertionError(f"allowlisted absent license rejected: {format_identity(identity)}")
-        for field, mutated in (("name", name + "-mutated"), ("version", version + ".1"),
-                               ("source", source + "-mutated")):
+            raise AssertionError(
+                f"allowlisted identity rejected: {format_identity(identity)}"
+            )
+        if (
+            check_package(
+                {key: value for key, value in package.items() if key != "license"}
+            )
+            != identity
+        ):
+            raise AssertionError(
+                f"allowlisted absent license rejected: {format_identity(identity)}"
+            )
+        for field, mutated in (
+            ("name", name + "-mutated"),
+            ("version", version + ".1"),
+            ("source", source + "-mutated"),
+        ):
             changed = package | {field: mutated}
             try:
                 check_package(changed)
             except ValueError as error:
                 diagnostic = str(error)
-                for component in (changed["name"], changed["version"], changed["source"]):
+                for component in (
+                    changed["name"],
+                    changed["version"],
+                    changed["source"],
+                ):
                     if str(component) not in diagnostic:
-                        raise AssertionError(f"incomplete identity diagnostic: {diagnostic}")
+                        raise AssertionError(
+                            f"incomplete identity diagnostic: {diagnostic}"
+                        ) from error
             else:
-                raise AssertionError(f"{field} drift accepted: {format_identity(identity)}")
+                raise AssertionError(
+                    f"{field} drift accepted: {format_identity(identity)}"
+                )
         try:
             check_package(package | {"license": "MIT OR"})
         except ValueError as error:
             if format_identity(identity) not in str(error):
-                raise AssertionError(f"license diagnostic omitted identity: {error}")
+                raise AssertionError(
+                    f"license diagnostic omitted identity: {error}"
+                ) from error
         else:
-            raise AssertionError(f"unparsable SPDX accepted: {format_identity(identity)}")
+            raise AssertionError(
+                f"unparsable SPDX accepted: {format_identity(identity)}"
+            )
         for malformed_license in (123, [], "", "   "):
             try:
                 check_package(package | {"license": malformed_license})
             except ValueError as error:
                 if format_identity(identity) not in str(error):
-                    raise AssertionError(f"malformed license diagnostic omitted identity: {error}")
+                    raise AssertionError(
+                        f"malformed license diagnostic omitted identity: {error}"
+                    ) from error
             else:
-                raise AssertionError(f"malformed license accepted: {format_identity(identity)}")
+                raise AssertionError(
+                    f"malformed license accepted: {format_identity(identity)}"
+                )
     metadata_identities = [
-        check_package({"name": name, "version": version, "source": source, "license": None})
+        check_package(
+            {"name": name, "version": version, "source": source, "license": None}
+        )
         for name, version, source in MISSING_LICENSE_EXCEPTIONS
     ]
     check_missing_license_completeness(metadata_identities)
@@ -218,14 +298,20 @@ def self_test() -> None:
         check_missing_license_completeness(metadata_identities[:-1])
     except ValueError as error:
         if "allowlist identities absent from metadata" not in str(error):
-            raise AssertionError(f"missing allowlist member was not diagnosed: {error}")
+            raise AssertionError(
+                f"missing allowlist member was not diagnosed: {error}"
+            ) from error
     else:
         raise AssertionError("stale allowlist accepted")
     try:
-        check_missing_license_completeness(metadata_identities + [metadata_identities[0]])
+        check_missing_license_completeness(
+            metadata_identities + [metadata_identities[0]]
+        )
     except ValueError as error:
         if "duplicate missing-license metadata identities" not in str(error):
-            raise AssertionError(f"duplicate identity was not diagnosed: {error}")
+            raise AssertionError(
+                f"duplicate identity was not diagnosed: {error}"
+            ) from error
     else:
         raise AssertionError("duplicate metadata identity accepted")
 
