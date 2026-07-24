@@ -60,3 +60,37 @@ The Breez and target-floor commands intentionally live in the native workflow.
 An always-running final gate fails unless policy and every native matrix leg succeeds.
 Live four-target evidence remains pending until that workflow runs; workflow source
 and local results are not represented as native proof.
+
+## Wave 5 candidate acceptance
+
+No Wave 5 candidate has been accepted. This document is an evidence index only;
+it is not an acceptance record and does not change the blocked cutover status.
+
+When all qualification work has actually completed, reviewers must index the
+single accepted `wave5-candidate-manifest.json` here with its SHA-256 and the
+exact GitHub Actions URLs/run IDs for all seven evidence records:
+
+| Evidence class | Required run | Current evidence |
+| --- | --- | --- |
+| Local structural contract tests | local command output | PASS only for offline structure; not native, integration, or payment proof |
+| Integration semantic bundle | `rust-integration-qualification.yml` run ID | Pending |
+| Native aggregate | `rust-platform.yml` run ID, all four targets | Pending |
+| LND protected canary | `rust-payment-canary.yml` LND run ID | Pending; requires explicit protected-environment approval |
+| Breez protected canary | `rust-payment-canary.yml` Breez run ID | Pending; requires separate explicit protected-environment approval |
+| Candidate acceptance | `rust-wave5-acceptance.yml` run ID and manifest SHA-256 | Pending |
+
+The acceptance workflow takes these IDs explicitly, re-downloads historical
+redacted artifacts with read-only permissions, validates source/lock identity,
+digests, schema, target/backend/runner identity, attestation or canary
+signature, and emits the manifest digest. A failed, skipped, expired, missing,
+ambiguous, or unverifiable record remains a rejection; it must never be written
+as PASS in this report.
+
+Post-acceptance publication must follow
+[`docs/wave5-evidence-publication.md`](../docs/wave5-evidence-publication.md).
+The cutover checkpoint remains blocked until the real integration, four-target
+native, LND canary, and Breez canary runs succeed; candidate acceptance and both
+independent reviews complete; explicit docs-only commit approval is recorded;
+and the exact published report passes the report verifier. The immutable
+acceptance artifact remains authoritative; this source-controlled report is
+only a publication copy.

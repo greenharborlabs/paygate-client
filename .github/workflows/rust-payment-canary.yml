@@ -65,7 +65,7 @@ jobs:
       - name: Retain only validated redacted evidence
         if: ${{ success() }}
         run: install -m 0600 /var/lib/paygate/payment-canary/result.json canary-result.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ success() }}
         with: {name: lnd-testnet-canary-validated-result, path: canary-result.json, retention-days: 90}
 
@@ -104,6 +104,6 @@ jobs:
       - name: Retain only validated redacted evidence
         if: ${{ success() }}
         run: install -m 0600 /var/lib/paygate/payment-canary/result.json canary-result.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ success() }}
         with: {name: breez-mainnet-canary-validated-result, path: canary-result.json, retention-days: 90}

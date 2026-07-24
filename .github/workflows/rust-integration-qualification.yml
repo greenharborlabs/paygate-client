@@ -80,7 +80,7 @@ jobs:
           tar -czf semantic-evidence-bundle.tar.gz python-semantic-evidence.json rust-semantic-evidence.json semantic-contract-result.txt
           sha256sum semantic-evidence-bundle.tar.gz > semantic-evidence-bundle.sha256
           bundle_sha256="$(awk '{print $1}' semantic-evidence-bundle.sha256)"
-          python3 -c 'import json, sys; print(json.dumps({"schema_version": 1, "subject_name": "semantic-evidence-bundle.tar.gz", "archive_subject_sha256": sys.argv[1], "digest_scope": "archive subject SHA-256; not a GitHub-attestation ID", "retention_days": 90, "source_commit": sys.argv[2], "workflow_run_id": sys.argv[3]}, separators=(",", ":")))' "$bundle_sha256" "$GITHUB_SHA" "$GITHUB_RUN_ID" > semantic-evidence-bundle-metadata.json
+          python3 -c 'import json, sys; print(json.dumps({"schema_version": 2, "subject_name": "semantic-evidence-bundle.tar.gz", "archive_subject_sha256": sys.argv[1], "digest_scope": "archive subject SHA-256; not a GitHub-attestation ID", "retention_days": 90, "source_commit": sys.argv[2], "workflow_run_id": sys.argv[3], "observed_at_epoch": int(sys.argv[4])}, separators=(",", ":")))' "$bundle_sha256" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$(date -u +%s)" > semantic-evidence-bundle-metadata.json
       - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |

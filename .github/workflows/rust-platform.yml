@@ -97,7 +97,7 @@ jobs:
           name: rust-build-${{ matrix.target }}
           path: transfer/runtime-bundle-${{ matrix.target }}.tar.gz
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 90
 
   qualify-runtime:
     name: Native runtime (${{ matrix.target }})
@@ -242,7 +242,7 @@ jobs:
           name: runtime-evidence-${{ matrix.target }}
           path: evidence/runtime-evidence-${{ matrix.target }}.json
           if-no-files-found: ignore
-          retention-days: 1
+          retention-days: 90
 
   required-rust-platform-qualification:
     name: Rust native platform qualification
