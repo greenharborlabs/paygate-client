@@ -1,0 +1,109 @@
+name: Rust payment canaries (protected runner control plane)
+
+on:
+  workflow_dispatch:
+    inputs:
+      approve_lnd_testnet_canary:
+        description: "Approve only the LND testnet protected environment."
+        required: true
+        type: boolean
+        default: false
+      approve_breez_mainnet_canary:
+        description: "Approve only the Breez mainnet protected environment."
+        required: true
+        type: boolean
+        default: false
+
+# Wallet material exists only inside the isolated runner deployment.  Inputs never
+# carry a command, invoice, preimage, credential, backend value, or cap.
+permissions:
+  contents: read
+
+jobs:
+  reject-dual-dispatch:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Reject cross-backend dispatch before either runner starts
+        run: |
+          if [ "${{ inputs.approve_lnd_testnet_canary }}" = true ] && [ "${{ inputs.approve_breez_mainnet_canary }}" = true ]; then
+            echo "exactly one backend approval is required" >&2
+            exit 1
+          fi
+
+  lnd-testnet-canary:
+    needs: reject-dual-dispatch
+    if: ${{ inputs.approve_lnd_testnet_canary && !inputs.approve_breez_mainnet_canary }}
+    environment: lnd-testnet-canary
+    concurrency:
+      group: paygate-payment-canary
+      cancel-in-progress: false
+    runs-on: [self-hosted, linux, paygate-payment-canary, lnd-testnet-canary]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: {persist-credentials: false}
+      - name: Compute immutable candidate identity
+        run: |
+          printf '%s' "$GITHUB_SHA" > .canary-source-commit
+          sha256sum Cargo.lock | awk '{print $1}' > .canary-cargo-lock-sha256
+      - name: Verify fresh live infrastructure protection
+        run: python3 scripts/check-rust-canary-contract.py --backend lnd-testnet-canary --runner-identity approved-lnd-runner-v1 --infrastructure-attestation /var/lib/paygate/payment-canary/live-infrastructure-attestation.json
+      - name: Invoke fixed protected runner once
+        id: runner
+        run: |
+          set +e
+          trap 'rm -f "$runner_log"' EXIT
+          runner_log="$(mktemp /var/lib/paygate/payment-canary/transient-runner.XXXXXX)"
+          /opt/paygate/payment-canary-runner/current/payment-canary-runner --backend lnd-testnet-canary --source-commit "$(cat .canary-source-commit)" --cargo-lock-sha256 "$(cat .canary-cargo-lock-sha256)" --workflow-run-id "$GITHUB_RUN_ID" --result /var/lib/paygate/payment-canary/result.json >"$runner_log" 2>&1
+          runner_status=$?
+          echo "invoked=true" >> "$GITHUB_OUTPUT"
+          echo "status=$runner_status" >> "$GITHUB_OUTPUT"
+      - name: Validate redacted runner result unconditionally
+        if: ${{ always() && steps.runner.outputs.invoked == 'true' }}
+        run: |
+          python3 scripts/check-rust-canary-result.py /var/lib/paygate/payment-canary/result.json --backend lnd-testnet-canary --source-commit "$(cat .canary-source-commit)" --cargo-lock-sha256 "$(cat .canary-cargo-lock-sha256)" --workflow-run-id "$GITHUB_RUN_ID"
+          test "${{ steps.runner.outputs.status }}" = 0
+      - name: Retain only validated redacted evidence
+        if: ${{ success() }}
+        run: install -m 0600 /var/lib/paygate/payment-canary/result.json canary-result.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ success() }}
+        with: {name: lnd-testnet-canary-validated-result, path: canary-result.json, retention-days: 90}
+
+  breez-mainnet-canary:
+    needs: reject-dual-dispatch
+    if: ${{ inputs.approve_breez_mainnet_canary && !inputs.approve_lnd_testnet_canary }}
+    environment: breez-mainnet-canary
+    concurrency:
+      group: paygate-payment-canary
+      cancel-in-progress: false
+    runs-on: [self-hosted, linux, paygate-payment-canary, breez-mainnet-canary]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with: {persist-credentials: false}
+      - name: Compute immutable candidate identity
+        run: |
+          printf '%s' "$GITHUB_SHA" > .canary-source-commit
+          sha256sum Cargo.lock | awk '{print $1}' > .canary-cargo-lock-sha256
+      - name: Verify fresh live infrastructure protection
+        run: python3 scripts/check-rust-canary-contract.py --backend breez-mainnet-canary --runner-identity approved-breez-runner-v1 --infrastructure-attestation /var/lib/paygate/payment-canary/live-infrastructure-attestation.json
+      - name: Invoke fixed protected runner once
+        id: runner
+        run: |
+          set +e
+          trap 'rm -f "$runner_log"' EXIT
+          runner_log="$(mktemp /var/lib/paygate/payment-canary/transient-runner.XXXXXX)"
+          /opt/paygate/payment-canary-runner/current/payment-canary-runner --backend breez-mainnet-canary --source-commit "$(cat .canary-source-commit)" --cargo-lock-sha256 "$(cat .canary-cargo-lock-sha256)" --workflow-run-id "$GITHUB_RUN_ID" --result /var/lib/paygate/payment-canary/result.json >"$runner_log" 2>&1
+          runner_status=$?
+          echo "invoked=true" >> "$GITHUB_OUTPUT"
+          echo "status=$runner_status" >> "$GITHUB_OUTPUT"
+      - name: Validate redacted runner result unconditionally
+        if: ${{ always() && steps.runner.outputs.invoked == 'true' }}
+        run: |
+          python3 scripts/check-rust-canary-result.py /var/lib/paygate/payment-canary/result.json --backend breez-mainnet-canary --source-commit "$(cat .canary-source-commit)" --cargo-lock-sha256 "$(cat .canary-cargo-lock-sha256)" --workflow-run-id "$GITHUB_RUN_ID"
+          test "${{ steps.runner.outputs.status }}" = 0
+      - name: Retain only validated redacted evidence
+        if: ${{ success() }}
+        run: install -m 0600 /var/lib/paygate/payment-canary/result.json canary-result.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ success() }}
+        with: {name: breez-mainnet-canary-validated-result, path: canary-result.json, retention-days: 90}

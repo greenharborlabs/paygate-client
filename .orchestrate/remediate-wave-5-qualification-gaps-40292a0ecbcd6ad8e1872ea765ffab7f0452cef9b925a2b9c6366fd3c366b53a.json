@@ -1,0 +1,34 @@
+{
+  "plan_path": "plans/remediate-wave-5-qualification-gaps.md",
+  "plan_hash": "40292a0ecbcd6ad8e1872ea765ffab7f0452cef9b925a2b9c6366fd3c366b53a",
+  "start_commit": "87bec9d32183d78972f1375ce196cdd3d4633129",
+  "tasks": {
+    "W1-01": "blocked",
+    "W2-01": "pending",
+    "W3-01": "pending"
+  },
+  "blocked_reasons": {
+    "W1-01": "After three Coder-to-Reviewer cycles, the Rust bridge still writes authorization-bearing temporary state before owner-only file and directory permissions are set; reviewer marked this a critical private-file race."
+  },
+  "gates": {
+    "final_verification": "pending",
+    "specialist_review": "pending"
+  },
+  "touched_tests": [
+    "tests/oracle_semantic_bridge.rs",
+    "tests/platform-smoke/test_wave5_qualification_contracts.py"
+  ],
+  "contract_registry": [
+    {
+      "file": "scripts/check-oracle-semantic-contract.py",
+      "name": "comparator provenance binding",
+      "signature": "--expected-binary-sha256, --expected-source-commit, --expected-cargo-lock-sha256 required"
+    }
+  ],
+  "agent_suite": {
+    "coder": "general mixed Rust/Python coder",
+    "reviewer": "general mixed Rust/Python reviewer",
+    "architect": "general architecture reviewer"
+  },
+  "test_cmd": "CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test oracle_semantic_bridge && ./.venv/bin/python -m pytest tests/platform-smoke/test_wave5_qualification_contracts.py"
+}

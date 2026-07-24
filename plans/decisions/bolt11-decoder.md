@@ -1,8 +1,9 @@
 # ADR: BOLT11 decoder qualification is blocked
 
-- Status: **release blocking — no dependency selected**
+- Status: **superseded by the accepted Rust decoder decision**
 - Date: 2026-07-18
-- Scope: W1-01 of `bind-validated-bolt11-amount-and-payment-hash-to-every-policy-approved-payment-before-wallet-submission.md`
+- Scope: historical Python decoder investigation; superseded by
+  `../rust-cutover.md` and `rust-cutover-dependencies.md`
 
 ## Decision
 

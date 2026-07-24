@@ -1,0 +1,27 @@
+{
+  "plan_path": "plans/rust-cutover.md",
+  "plan_hash": "14e6d2519d6554cc25070f6401bc8ba54901b2466016ec2282dfb555306c819c",
+  "start_commit": "30dfc3356fb24b7d9318338ab7d3cdd91268b30b",
+  "tasks": {
+    "W1": "completed",
+    "W2": "completed",
+    "W3-01": "completed",
+    "W3-02": "completed",
+    "W4": "completed",
+    "W5": "blocked",
+    "final-verification-gate": "pending",
+    "specialist-review-gate": "pending"
+  },
+  "blocked_reasons": {
+    "W5": "Independent review still finds Python-derived (not executed Rust) semantic evidence and a canary result validator disconnected from the fail-closed jobs; requires focused root-cause implementation before qualification can pass."
+  },
+  "gates": {"final_verification": "pending", "specialist_review": "pending"},
+  "touched_tests": [],
+  "contract_registry": [],
+  "agent_suite": {
+    "coder": "rust-coder",
+    "reviewer": "rust-reviewer",
+    "architect": "rust-architect"
+  },
+  "test_cmd": "CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test <affected-test>"
+}

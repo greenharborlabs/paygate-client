@@ -1,0 +1,1 @@
+{"purpose":"infrastructure-attestation","keys":[{"id":"infra-v1","issuer":"paygate-infrastructure-verifier-v1","not_before":"2026-01-01T00:00:00Z","not_after":"2027-01-01T00:00:00Z","revoked":false,"public_key":"security/payment-canary-trust/infrastructure-v1.pub"}]}

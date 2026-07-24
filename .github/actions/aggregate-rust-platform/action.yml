@@ -16,6 +16,7 @@ runs:
       env:
         EVIDENCE_DIRECTORY: ${{ inputs.evidence-directory }}
         MAX_AGE_SECONDS: ${{ inputs.max-age-seconds }}
+        EXPECTED_WORKFLOW_RUN_ID: ${{ github.run_id }}
       run: |
         set -euo pipefail
         python3 - <<'PY'
@@ -79,7 +80,7 @@ runs:
             else:
                 if age < 0 or age > int(os.environ["MAX_AGE_SECONDS"]):
                     failures.append(f"stale evidence for {target}: age {age:.0f}s")
-            required = {"artifact_sha256", "source_commit", "cargo_lock_sha256", "builder_runner_identity", "executor_runner_identity", "provenance"}
+            required = {"artifact_sha256", "binary_sha256", "source_commit", "cargo_lock_sha256", "builder_runner_identity", "executor_runner_identity", "workflow_run_id", "provenance"}
             missing = required.difference(record)
             if missing:
                 failures.append(f"missing manifest fields for {target}: {sorted(missing)}")
@@ -92,13 +93,22 @@ runs:
             if empty:
                 failures.append(f"empty manifest fields for {target}: {empty}")
                 continue
-            for field in ("artifact_sha256", "cargo_lock_sha256"):
+            for field in ("artifact_sha256", "binary_sha256", "cargo_lock_sha256"):
                 if re.fullmatch(r"[0-9a-f]{64}", record[field]) is None:
                     failures.append(f"invalid {field} for {target}")
             if re.fullmatch(r"[0-9a-f]{40}", record["source_commit"]) is None:
                 failures.append(f"invalid source_commit for {target}")
             if record["provenance"] != "github-attestation:slsa-v1":
                 failures.append(f"invalid provenance for {target}")
+            if record["workflow_run_id"] != os.environ["EXPECTED_WORKFLOW_RUN_ID"]:
+                failures.append(f"workflow run mismatch for {target}")
+        identities = {
+            (record["source_commit"], record["cargo_lock_sha256"], record["workflow_run_id"])
+            for record in records.values()
+            if all(field in record for field in ("source_commit", "cargo_lock_sha256", "workflow_run_id"))
+        }
+        if len(identities) > 1:
+            failures.append("evidence records are not bound to one source/lock/workflow identity")
         if failures:
             print("Rust platform qualification failed closed:", *failures, sep="\n- ", file=sys.stderr)
             sys.exit(1)

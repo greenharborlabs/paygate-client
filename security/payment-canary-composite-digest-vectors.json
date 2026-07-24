@@ -1,0 +1,22 @@
+{
+  "profile": "paygate-github-protection-v1",
+  "repository": "greenharborlabs/paygate-client",
+  "vectors": [
+    {
+      "id": "lnd-testnet-canary-redacted-v1",
+      "backend": "lnd-testnet-canary",
+      "environment_configuration_digest": "sha256:3a143b10d8b7cb5b1cf2dd15449b3d83a2cb31dc2f413ac6f373921e63c8752a",
+      "runner_group_configuration_digest": "sha256:99c5e2da02bc57cccedf5677787ad005f8f58c4633eb4d1de3349fd764997d9f",
+      "canonical_json": "{\"backend\":\"lnd-testnet-canary\",\"environment_configuration_digest\":\"sha256:3a143b10d8b7cb5b1cf2dd15449b3d83a2cb31dc2f413ac6f373921e63c8752a\",\"profile\":\"paygate-github-protection-v1\",\"repository\":\"greenharborlabs/paygate-client\",\"runner_group_configuration_digest\":\"sha256:99c5e2da02bc57cccedf5677787ad005f8f58c4633eb4d1de3349fd764997d9f\"}",
+      "composite_digest": "sha256:11983aac8c2c7b783c90338259ef3cc253854ed32ceb464366e96e1d9bac0ce2"
+    },
+    {
+      "id": "breez-mainnet-canary-redacted-v1",
+      "backend": "breez-mainnet-canary",
+      "environment_configuration_digest": "sha256:cfc6e441afbdbc2bd9f9b4ab9d209c66f4bea0da2390a1e9d4dd723a7ab8cf92",
+      "runner_group_configuration_digest": "sha256:99c5e2da02bc57cccedf5677787ad005f8f58c4633eb4d1de3349fd764997d9f",
+      "canonical_json": "{\"backend\":\"breez-mainnet-canary\",\"environment_configuration_digest\":\"sha256:cfc6e441afbdbc2bd9f9b4ab9d209c66f4bea0da2390a1e9d4dd723a7ab8cf92\",\"profile\":\"paygate-github-protection-v1\",\"repository\":\"greenharborlabs/paygate-client\",\"runner_group_configuration_digest\":\"sha256:99c5e2da02bc57cccedf5677787ad005f8f58c4633eb4d1de3349fd764997d9f\"}",
+      "composite_digest": "sha256:00b3ff268333e8761a179e6d7572a3015c29e46c541e5f21bd2caead9bb28957"
+    }
+  ]
+}

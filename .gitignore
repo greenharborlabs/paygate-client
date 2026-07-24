@@ -39,3 +39,7 @@ venv/
 
 build/
 dist/
+target/
+.pytest_cache/
+__pycache__/
+*.py[cod]

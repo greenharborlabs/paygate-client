@@ -1,0 +1,18 @@
+{
+  "plan_path": "plans/remediate-wave-5-qualification-gaps.md",
+  "plan_hash": "40292a0ecbcd6ad8e1872ea765ffab7f0452cef9b925a2b9c6366fd3c366b53a",
+  "start_commit": "a4a0267519716d9264e4e4c60dfec77474b4ee8b",
+  "tasks": {"W1-01": "completed"},
+  "blocked_reasons": {},
+  "gates": {"final_verification": "pending", "specialist_review": "pending"},
+  "touched_tests": [
+    "tests/oracle_semantic_bridge.rs",
+    "tests/platform-smoke/test_wave5_qualification_contracts.py"
+  ],
+  "contract_registry": [
+    {"file": "scripts/check-oracle-semantic-contract.py", "name": "semantic evidence record", "signature": "strict schema, provenance, approval and case-envelope validation"},
+    {"file": ".github/workflows/rust-integration-qualification.yml", "name": "semantic evidence bundle", "signature": "tar + checksum metadata separately GitHub-attested; 90-day retention"}
+  ],
+  "agent_suite": {"coder": "Rust/Python focused", "reviewer": "independent contract/security", "architect": "targeted trust-boundary architect"},
+  "test_cmd": "CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test oracle_semantic_bridge; uv run pytest tests/platform-smoke/test_wave5_qualification_contracts.py"
+}

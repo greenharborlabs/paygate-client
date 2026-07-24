@@ -1,0 +1,19 @@
+                                                                                
+ Usage: paygate [OPTIONS] COMMAND [ARGS]...                                     
+                                                                                
+ Paygate command-line client.                                                   
+                                                                                
+╭─ Options ────────────────────────────────────────────────────────────────────╮
+│ --version                     Show the installed paygate-client version.     │
+│ --install-completion          Install completion for the current shell.      │
+│ --show-completion             Show completion for the current shell, to copy │
+│                               it or customize the installation.              │
+│ --help                        Show this message and exit.                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────╮
+│ request      Send an HTTP request and satisfy a Paygate 402 challenge when   │
+│              required.                                                       │
+│ backend      Diagnose payer backend integrations.                            │
+│ credentials  Inspect and purge cached payment credentials.                   │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

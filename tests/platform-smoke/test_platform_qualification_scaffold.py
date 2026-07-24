@@ -63,10 +63,16 @@ def test_qualification_matrix_uses_available_native_hosted_runners() -> None:
         in workflow
     )
     assert 'test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"' in workflow
-    assert (STUB / "Cargo.toml").is_file()
-    assert (STUB / "Cargo.lock").is_file()
-    assert (STUB / "src/main.rs").is_file()
-    assert '--manifest-path "$STUB_ROOT/Cargo.toml"' in workflow
+    assert (ROOT / "Cargo.toml").is_file()
+    assert (ROOT / "Cargo.lock").is_file()
+    assert "cargo +1.88.0 fetch --locked" in workflow
+    assert 'cargo build --locked --offline --release --target "$1"' in workflow
+    assert (
+        'cargo +1.88.0 build --locked --offline --release --target "$TARGET"'
+        in workflow
+    )
+    assert "docker run --rm --network none" in workflow
+    assert "cargo vendor" not in workflow
 
 
 def test_artifacts_are_digest_and_provenance_verified_before_native_execution() -> None:
@@ -76,6 +82,8 @@ def test_artifacts_are_digest_and_provenance_verified_before_native_execution() 
     assert "source_commit" in workflow
     assert "builder_runner_identity" in workflow
     assert "executor_runner_identity" in workflow
+    assert "binary_sha256" in workflow
+    assert "workflow_run_id" in workflow
     assert "actions/attest-build-provenance@" in workflow
     assert "github-attestation:slsa-v1" in workflow
     assert "gh attestation verify" in workflow
@@ -98,7 +106,9 @@ def test_artifacts_are_digest_and_provenance_verified_before_native_execution() 
     assert "missing macOS deployment target" in workflow
     assert "macOS deployment target exceeds 15.0" in workflow
     assert "shasum -a 256" in workflow
-    assert "python3" not in workflow
+    assert "python3 scripts/check-rust-linkage.py" in workflow
+    assert "--test keyring_qualification -- --ignored" in workflow
+    assert "--test breez_lifecycle_qualification -- --ignored" in workflow
 
 
 def test_artifact_and_provenance_rejection_paths_are_non_bypassable() -> None:
@@ -125,6 +135,8 @@ def test_artifact_and_provenance_rejection_paths_are_non_bypassable() -> None:
         "Cargo.lock mismatch",
         "artifact digest mismatch",
         "missing builder identity",
+        "workflow run mismatch",
+        "binary digest mismatch",
     ):
         index = workflow.index(message)
         assert "exit 1" in workflow[index : index + 120]
@@ -151,10 +163,12 @@ def test_embedded_aggregate_executes_all_failure_injections(tmp_path: Path) -> N
         "status": "success",
         "observed_at_epoch": now,
         "artifact_sha256": "a" * 64,
+        "binary_sha256": "d" * 64,
         "source_commit": "c" * 40,
         "cargo_lock_sha256": "b" * 64,
         "builder_runner_identity": "builder",
         "executor_runner_identity": "executor",
+        "workflow_run_id": "12345",
         "provenance": "github-attestation:slsa-v1",
     }
     for target in TARGETS:
@@ -165,6 +179,7 @@ def test_embedded_aggregate_executes_all_failure_injections(tmp_path: Path) -> N
         **os.environ,
         "EVIDENCE_DIRECTORY": str(evidence),
         "MAX_AGE_SECONDS": "86400",
+        "EXPECTED_WORKFLOW_RUN_ID": "12345",
     }
     command = [sys.executable, "-c", aggregate]
     assert subprocess.run(command, env=env, check=False).returncode == 0
@@ -183,12 +198,15 @@ def test_embedded_aggregate_executes_all_failure_injections(tmp_path: Path) -> N
         ("wrong-target", {"target": TARGETS[0]}),
         ("missing-artifact-digest", {"artifact_sha256": ""}),
         ("invalid-artifact-digest", {"artifact_sha256": "z" * 64}),
+        ("missing-binary-digest", {"binary_sha256": ""}),
+        ("invalid-binary-digest", {"binary_sha256": "z" * 64}),
         ("missing-source-commit", {"source_commit": ""}),
         ("invalid-source-commit", {"source_commit": "c" * 39}),
         ("missing-lock-digest", {"cargo_lock_sha256": ""}),
         ("invalid-lock-digest", {"cargo_lock_sha256": "z" * 64}),
         ("missing-builder", {"builder_runner_identity": ""}),
         ("missing-executor", {"executor_runner_identity": ""}),
+        ("wrong-workflow-run", {"workflow_run_id": "different"}),
         ("wrong-provenance", {"provenance": "unverified"}),
     )
     for _name, mutation in cases:

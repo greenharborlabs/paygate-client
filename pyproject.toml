@@ -60,7 +60,7 @@ dev = [
     "poethepoet>=0.27,<1",
     "pytest>=8.2,<9",
     "types-PyYAML>=6.0.12,<7",
-    "ruff>=0.5,<1",
+    "ruff==0.16.0",
     "setuptools>=77.0.3",
     "tomli>=2,<3; python_version < '3.11'",
     "wheel>=0.45,<1",

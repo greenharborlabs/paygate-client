@@ -1,0 +1,47 @@
+name: Rust development gate
+
+on:
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - src/**
+      - scripts/check-rust-licenses.py
+      - tests/*qualification.rs
+      - .github/workflows/rust-qualification.yml
+  workflow_dispatch:
+
+# This development gate receives no release, payer, or wallet secrets and never
+# submits a payment. Native qualification prototypes run later, against the
+# integrated client, as Wave 5 evidence rather than PR blockers.
+permissions:
+  contents: read
+
+jobs:
+  development-gate:
+    name: Rust Wave 2 development gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.88.0
+        run: >-
+          rustup toolchain install 1.88.0 --profile minimal
+          --component rustfmt --component clippy
+      - name: Prime locked Rust dependency cache
+        run: cargo +1.88.0 fetch --locked
+      - name: Run the balanced Wave 2 development gate
+        shell: bash
+        env:
+          PAYGATE_QUALIFICATION_PYTHON: python3
+        run: |
+          set -euo pipefail
+          cargo +1.88.0 fmt --check
+          CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test interface_contract --test dependency_qualification --test keyring_qualification
+          CARGO_NET_OFFLINE=true cargo +1.88.0 metadata --locked --offline --all-features --format-version 1 > /tmp/paygate-wave2-metadata.json
+          python3 scripts/check-rust-licenses.py --self-test
+          python3 scripts/check-rust-licenses.py /tmp/paygate-wave2-metadata.json
+          git diff --check
