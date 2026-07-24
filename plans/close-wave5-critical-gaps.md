@@ -170,7 +170,9 @@ from validated data.
 Canonical JSON bytes are defined once as:
 
 ```python
-json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+    "utf-8"
+)
 ```
 
 Candidate, index, envelope, and validator-result JSON files contain those exact
