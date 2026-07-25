@@ -598,10 +598,12 @@ def test_canary_validator_requires_distinct_result_and_ledger_signatures(
     assert subprocess.run(command).returncode != 0
 
 
-def test_payment_canaries_are_separate_protected_fail_closed_jobs() -> None:
+def test_payment_canary_is_breez_only_protected_and_fail_closed() -> None:
     workflow = (ROOT / ".github/workflows/rust-payment-canary.yml").read_text()
-    for backend in ("lnd-testnet-canary", "breez-mainnet-canary"):
-        assert f"environment: {backend}" in workflow
+    assert "approve_lnd_testnet_canary" not in workflow
+    assert "lnd-testnet-canary" not in workflow
+    assert "approve_breez_mainnet_canary" in workflow
+    assert "environment: breez-mainnet-canary" in workflow
     assert "group: paygate-payment-canary" in workflow
     assert "runs-on: [self-hosted, linux, paygate-payment-canary" in workflow
     assert (
@@ -614,12 +616,12 @@ def test_payment_canaries_are_separate_protected_fail_closed_jobs() -> None:
     )
     assert "always()" in workflow
     assert "secrets:" not in workflow
-    assert "exactly one backend approval is required" in workflow
+    assert "approval is required" in workflow
     assert (
         workflow.count(
             "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
         )
-        == 2
+        == 1
     )
     assert "actions/upload-artifact@v4" not in workflow
 
@@ -653,7 +655,7 @@ def test_canary_control_plane_uses_literal_attempt_keys_and_preflight_guards() -
         contract["durable_ledger"]["authority_uri"]
         == inventory["durable_ledger"]["authority_uri"]
     )
-    for backend in ("lnd-testnet-canary", "breez-mainnet-canary"):
+    for backend in ("breez-mainnet-canary",):
         marker = f"--backend {backend}"
         start = workflow.index(marker)
         status = workflow.index("runner_status=$?", start)
