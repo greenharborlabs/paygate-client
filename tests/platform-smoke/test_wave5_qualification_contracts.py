@@ -9,6 +9,8 @@ from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -599,11 +601,39 @@ def test_canary_validator_requires_distinct_result_and_ledger_signatures(
 
 
 def test_payment_canary_is_breez_only_protected_and_fail_closed() -> None:
-    workflow = (ROOT / ".github/workflows/rust-payment-canary.yml").read_text()
+    workflow = (ROOT / ".github/workflows/rust-payment-canary.yml").read_text(
+        encoding="utf-8"
+    )
+    parsed = yaml.load(workflow, Loader=yaml.BaseLoader)
+    dispatch_inputs = parsed["on"]["workflow_dispatch"]["inputs"]
+    approval_input = dispatch_inputs["approve_breez_mainnet_canary"]
+    approval_job = parsed["jobs"]["require-explicit-approval"]
+    approval_script = approval_job["steps"][0]["run"]
+    canary_job = parsed["jobs"]["breez-mainnet-canary"]
+
+    assert set(dispatch_inputs) == {"approve_breez_mainnet_canary"}
+    assert approval_input == {
+        "description": "Explicitly approve the bounded Breez mainnet canary.",
+        "required": "true",
+        "type": "boolean",
+        "default": "false",
+    }
+    assert approval_script.count("${{ inputs.") == 1
+    assert (
+        'if [ "${{ inputs.approve_breez_mainnet_canary }}" != true ]; then'
+        in approval_script
+    )
+    assert (
+        'echo "explicit Breez mainnet canary approval is required" >&2'
+        in approval_script
+    )
+    assert "exit 1" in approval_script
+    assert canary_job["needs"] == "require-explicit-approval"
+    assert canary_job["if"] == "${{ inputs.approve_breez_mainnet_canary }}"
+    assert canary_job["environment"] == "breez-mainnet-canary"
+
     assert "approve_lnd_testnet_canary" not in workflow
     assert "lnd-testnet-canary" not in workflow
-    assert "approve_breez_mainnet_canary" in workflow
-    assert "environment: breez-mainnet-canary" in workflow
     assert "group: paygate-payment-canary" in workflow
     assert "runs-on: [self-hosted, linux, paygate-payment-canary" in workflow
     assert (
