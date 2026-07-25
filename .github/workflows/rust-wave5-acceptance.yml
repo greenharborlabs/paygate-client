@@ -1,0 +1,194 @@
+name: Rust Wave 5 candidate acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: "Full commit SHA shared by every supplied evidence run."
+        required: true
+        type: string
+      integration_run_id:
+        description: "Completed rust-integration-qualification workflow run ID."
+        required: true
+        type: string
+      native_run_id:
+        description: "Completed rust-platform workflow run ID."
+        required: true
+        type: string
+      breez_canary_run_id:
+        description: "Separately approved completed Breez canary run ID."
+        required: true
+        type: string
+
+# This workflow only reads an explicitly named historical candidate. It cannot
+# dispatch integration/native/canary jobs, create attestations, or access wallet
+# material. A failed or unavailable artifact is a rejection, never a PASS.
+permissions:
+  actions: read
+  attestations: read
+  contents: read
+
+jobs:
+  accept:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.source_commit }}
+          persist-credentials: false
+      - name: Verify explicit completed evidence runs bind to this source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          INTEGRATION_RUN: ${{ inputs.integration_run_id }}
+          NATIVE_RUN: ${{ inputs.native_run_id }}
+          BREEZ_RUN: ${{ inputs.breez_canary_run_id }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          printf '{"runs":{' > source-runs.json
+          first=true
+          for binding in "$INTEGRATION_RUN:Rust integration qualification:rust-integration-qualification.yml" "$NATIVE_RUN:Rust native platform qualification:rust-platform.yml" "$BREEZ_RUN:Rust payment canaries (protected runner control plane):rust-payment-canary.yml"; do
+            run="${binding%%:*}"; remainder="${binding#*:}"; expected_workflow="${remainder%%:*}"; expected_file="${remainder##*:}"
+            test "$run" != "$GITHUB_RUN_ID" || { echo "current-run evidence is forbidden" >&2; exit 1; }
+            metadata="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run")"
+            test "$(printf '%s' "$metadata" | jq -r .head_sha)" = "$SOURCE_COMMIT"
+            test "$(printf '%s' "$metadata" | jq -r .status)" = completed
+            test "$(printf '%s' "$metadata" | jq -r .conclusion)" = success
+            test "$(printf '%s' "$metadata" | jq -r .name)" = "$expected_workflow"
+            test "$(printf '%s' "$metadata" | jq -r .path)" = ".github/workflows/$expected_file"
+            $first || printf ',' >> source-runs.json; first=false
+            printf '"%s":' "$run" >> source-runs.json
+            printf '%s' "$metadata" | jq --arg file "$expected_file" '{run_id:(.id|tostring),url:.html_url,workflow_name:.name,workflow_file:$file,started_at_epoch:(.run_started_at|fromdateiso8601),completed_at_epoch:(.updated_at|fromdateiso8601)}' >> source-runs.json
+          done
+          printf '}}' >> source-runs.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: wave5-semantic-evidence-${{ inputs.integration_run_id }}
+          path: evidence/integration
+          run-id: ${{ inputs.integration_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: rust-build-*
+          path: evidence/native/bundles
+          merge-multiple: true
+          run-id: ${{ inputs.native_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: runtime-evidence-*
+          path: evidence/native/runtime
+          merge-multiple: true
+          run-id: ${{ inputs.native_run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: breez-mainnet-canary-validated-result
+          path: evidence/breez
+          run-id: ${{ inputs.breez_canary_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify attestations, redacted canary signatures, and construct manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          INTEGRATION_RUN: ${{ inputs.integration_run_id }}
+          NATIVE_RUN: ${{ inputs.native_run_id }}
+          BREEZ_RUN: ${{ inputs.breez_canary_run_id }}
+        run: |
+          set -euo pipefail
+          lock="$(sha256sum Cargo.lock | awk '{print $1}')"
+          test -f evidence/integration/semantic-evidence-bundle.tar.gz
+          test -f evidence/integration/semantic-evidence-bundle.sha256
+          test -f evidence/integration/semantic-evidence-bundle-metadata.json
+          test "$(find evidence/native/bundles -type f -name 'runtime-bundle-*.tar.gz' | wc -l | tr -d ' ')" = 4
+          test "$(find evidence/native/runtime -type f -name 'runtime-evidence-*.json' | wc -l | tr -d ' ')" = 4
+          test "$(sha256sum evidence/integration/semantic-evidence-bundle.tar.gz | awk '{print $1}')" = "$(awk '{print $1}' evidence/integration/semantic-evidence-bundle.sha256)"
+          gh attestation verify evidence/integration/semantic-evidence-bundle.tar.gz --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/rust-integration-qualification.yml" --source-digest "$SOURCE_COMMIT" --predicate-type https://slsa.dev/provenance/v1
+          gh attestation verify evidence/integration/semantic-evidence-bundle-metadata.json --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/rust-integration-qualification.yml" --source-digest "$SOURCE_COMMIT" --predicate-type https://slsa.dev/provenance/v1
+          for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin; do
+            bundle="evidence/native/bundles/runtime-bundle-${target}.tar.gz"
+            test -f "$bundle"
+            gh attestation verify "$bundle" --repo "$GITHUB_REPOSITORY" --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/rust-platform.yml" --source-digest "$SOURCE_COMMIT" --predicate-type https://slsa.dev/provenance/v1
+          done
+          python3 scripts/check-rust-canary-result.py evidence/breez/canary-result.json --backend breez-mainnet-canary --source-commit "$SOURCE_COMMIT" --cargo-lock-sha256 "$lock" --workflow-run-id "$BREEZ_RUN"
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, tarfile
+          root = pathlib.Path("evidence")
+          source, lock = os.environ["SOURCE_COMMIT"], os.popen("sha256sum Cargo.lock").read().split()[0]
+          digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
+          metadata = json.loads((root / "integration/semantic-evidence-bundle-metadata.json").read_text())
+          timing = json.loads(pathlib.Path("source-runs.json").read_text())
+          runs = timing["runs"]
+          integration = root / "integration/semantic-evidence-bundle.tar.gz"
+          native = []
+          targets = ("x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin")
+          for target in targets:
+              bundle = root / "native/bundles" / f"runtime-bundle-{target}.tar.gz"
+              evidence = root / "native/runtime" / f"runtime-evidence-{target}.json"
+              if not evidence.is_file(): raise SystemExit("native runtime evidence missing")
+              # Do not extract an untrusted archive.  Read only the one expected
+              # regular member after rejecting duplicate, oversized, or unsafe names.
+              with tarfile.open(bundle, "r:gz") as archive:
+                  members = archive.getmembers()
+                  selected = [member for member in members if member.name == "qualification-manifest.json"]
+                  if len(selected) != 1 or not selected[0].isfile() or selected[0].size > 65536 or any(member.name.startswith("/") or ".." in pathlib.PurePosixPath(member.name).parts for member in members):
+                      raise SystemExit("unsafe or ambiguous native bundle")
+                  handle = archive.extractfile(selected[0])
+                  if handle is None: raise SystemExit("native qualification manifest unavailable")
+                  qualification = json.loads(handle.read().decode("utf-8"))
+              expected = {"target", "artifact_sha256", "binary_sha256", "source_commit", "cargo_lock_sha256", "builder_runner_identity", "workflow_run_id"}
+              if set(qualification) != expected or qualification["target"] != target or qualification["source_commit"] != source or qualification["cargo_lock_sha256"] != lock or qualification["workflow_run_id"] != os.environ["NATIVE_RUN"] or not qualification["builder_runner_identity"]:
+                  raise SystemExit("attested native qualification manifest mismatch")
+              runtime = json.loads(evidence.read_text())
+              for key in ("target", "artifact_sha256", "binary_sha256", "source_commit", "cargo_lock_sha256", "builder_runner_identity", "workflow_run_id"):
+                  if runtime.get(key) != qualification[key]: raise SystemExit("native runtime evidence does not bind attested manifest")
+              native.append({"record_schema":"wave5-native-v1", "status":"success", "target":target, "workflow":"rust-platform.yml", "workflow_run_id":qualification["workflow_run_id"], "source_commit":qualification["source_commit"], "cargo_lock_sha256":qualification["cargo_lock_sha256"], "source_run":runs[qualification["workflow_run_id"]], "runner_identity":qualification["builder_runner_identity"], "provenance":"github-attestation:slsa-v1", "bundle":{"path":str(bundle), "sha256":digest(bundle)}, "qualification_manifest":qualification, "runtime_evidence":{"path":str(evidence), "sha256":digest(evidence)}})
+          gate_logic = {
+              "checker": {"path": "scripts/check-rust-canary-result.py", "sha256": digest(pathlib.Path("scripts/check-rust-canary-result.py"))},
+              "contract": {"path": "security/payment-canary-contract.yaml", "sha256": digest(pathlib.Path("security/payment-canary-contract.yaml"))},
+              "result_keyring": {"path": "security/payment-canary-trust/result-keyring.json", "sha256": digest(pathlib.Path("security/payment-canary-trust/result-keyring.json"))},
+              "ledger_keyring": {"path": "security/payment-canary-trust/ledger-keyring.json", "sha256": digest(pathlib.Path("security/payment-canary-trust/ledger-keyring.json"))},
+          }
+          canaries = []
+          for backend, directory, run in (("breez-mainnet-canary", "breez", os.environ["BREEZ_RUN"]),):
+              path = root / directory / "canary-result.json"; record = json.loads(path.read_text())
+              canaries.append({"record_schema":"wave5-canary-v2", "status":record.get("state"), "backend":backend, "workflow":"rust-payment-canary.yml", "workflow_run_id":run, "source_commit":record.get("source_commit"), "cargo_lock_sha256":record.get("cargo_lock_sha256"), "source_run":runs[run], "runner_identity":record.get("runner_identity"), "artifact":{"path":str(path), "sha256":digest(path)}, "gate_logic":gate_logic})
+          candidate = {"schema_version":3, "source_commit":source, "cargo_lock_sha256":lock, "integration":{"record_schema":"wave5-integration-v1", "status":"success", "workflow":"rust-integration-qualification.yml", "workflow_run_id":os.environ["INTEGRATION_RUN"], "source_commit":source, "cargo_lock_sha256":lock, "source_run":runs[os.environ["INTEGRATION_RUN"]], "bundle":{"path":str(integration), "sha256":digest(integration)}, "metadata":metadata}, "native_records":native, "canary_records":canaries}
+          pathlib.Path("wave5-candidate-manifest.json").write_bytes(json.dumps(candidate, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+          PY
+          now_epoch="$(date -u +%s)"
+          export NOW_EPOCH="$now_epoch"
+          python3 scripts/check-rust-wave5-candidate.py wave5-candidate-manifest.json --evidence-root . --canary-checker scripts/check-rust-canary-result.py --canary-contract security/payment-canary-contract.yaml --result-keyring security/payment-canary-trust/result-keyring.json --ledger-keyring security/payment-canary-trust/ledger-keyring.json --repository "$GITHUB_REPOSITORY" --now-epoch "$now_epoch" --evidence-index-output wave5-evidence-index.json > wave5-validator-result.json
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib
+          canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+          paths = [pathlib.Path(name) for name in ("wave5-candidate-manifest.json", "wave5-evidence-index.json", "wave5-validator-result.json")]
+          for path in paths:
+              if path.read_bytes() != canonical(json.loads(path.read_bytes())): raise SystemExit(f"noncanonical {path}")
+          digests = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+          now_epoch = int(os.environ["NOW_EPOCH"])
+          envelope = {"schema_version": 1, "repository": os.environ["GITHUB_REPOSITORY"], "acceptance_run_id": os.environ["GITHUB_RUN_ID"], "acceptance_run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}", "generated_at_epoch": now_epoch, "candidate_manifest_sha256": digests["wave5-candidate-manifest.json"], "evidence_index_sha256": digests["wave5-evidence-index.json"], "validator_result_sha256": digests["wave5-validator-result.json"]}
+          pathlib.Path("wave5-acceptance-envelope.json").write_bytes(canonical(envelope))
+          for name in ("wave5-candidate-manifest.json", "wave5-evidence-index.json", "wave5-acceptance-envelope.json", "wave5-validator-result.json"):
+              path = pathlib.Path(name); path.with_suffix(".sha256").write_text(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n", encoding="utf-8")
+          PY
+          for checksum in wave5-candidate-manifest.sha256 wave5-evidence-index.sha256 wave5-acceptance-envelope.sha256 wave5-validator-result.sha256; do
+            sha256sum --check "$checksum"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wave5-candidate-acceptance-${{ github.run_id }}
+          path: |
+            wave5-candidate-manifest.json
+            wave5-candidate-manifest.sha256
+            wave5-evidence-index.json
+            wave5-evidence-index.sha256
+            wave5-acceptance-envelope.json
+            wave5-acceptance-envelope.sha256
+            wave5-validator-result.json
+            wave5-validator-result.sha256
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false

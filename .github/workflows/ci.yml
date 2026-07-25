@@ -34,6 +34,12 @@ jobs:
       - name: Install package and dev tools
         run: python -m pip install --upgrade pip && python -m pip install ".[dev]"
 
+      - name: Install Rust 1.88.0
+        run: rustup toolchain install 1.88.0 --profile minimal
+
+      - name: Prime locked Rust dependency cache
+        run: cargo +1.88.0 fetch --locked
+
       - name: Run unit and CLI tests
         run: poe test
 

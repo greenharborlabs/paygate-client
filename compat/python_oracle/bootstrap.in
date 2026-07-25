@@ -1,0 +1,2 @@
+# Repository-contained dependencies needed only to execute the oracle tests.
+pytest==8.4.2

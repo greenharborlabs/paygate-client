@@ -1,0 +1,38 @@
+{
+  "plan_path": "plans/rust-cutover.md",
+  "plan_hash": "14e6d2519d6554cc25070f6401bc8ba54901b2466016ec2282dfb555306c819c",
+  "start_commit": "e436f17e0c3476b9b139e9a4766b2940f8ef6492",
+  "tasks": {
+    "W2-01": "completed",
+    "W2-02": "completed",
+    "W4": "completed"
+  },
+  "blocked_reasons": {},
+  "gates": {
+    "final_verification": "completed",
+    "specialist_review": "completed"
+  },
+  "touched_tests": [
+    "tests/platform-smoke/test_rust_development_gate.py",
+    "tests/wave4_payer_adapters.rs",
+    "tests/breez_sdk_contract.rs"
+  ],
+  "contract_registry": [
+    {
+      "file": "src/payers/breez.rs",
+      "name": "BreezSparkPayer",
+      "signature": "RealPayer implementation with explicit disconnect-gated storage release"
+    },
+    {
+      "file": "src/payers/lnd_rest.rs",
+      "name": "LndRestPayer<T>",
+      "signature": "RealPayer implementation over redirect-disabled injected transport"
+    }
+  ],
+  "agent_suite": {
+    "coder": "generic Rust coder",
+    "reviewer": "generic Rust reviewer",
+    "architect": "generic architect"
+  },
+  "test_cmd": "CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test wave4_payer_adapters"
+}

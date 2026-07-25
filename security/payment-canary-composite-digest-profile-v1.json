@@ -1,0 +1,20 @@
+{
+  "canonical_object": {
+    "backend": {"type": "string", "enum": ["lnd-testnet-canary", "breez-mainnet-canary"]},
+    "environment_configuration_digest": {"type": "string", "pattern": "sha256:<64 lowercase hex>"},
+    "profile": {"type": "string", "const": "paygate-github-protection-v1"},
+    "repository": {"type": "string", "const": "greenharborlabs/paygate-client"},
+    "runner_group_configuration_digest": {"type": "string", "pattern": "sha256:<64 lowercase hex>"}
+  },
+  "canonicalization": {
+    "encoding": "utf-8",
+    "json": "sorted keys, comma/colon separators, ASCII-safe JSON",
+    "object_fields": ["backend", "environment_configuration_digest", "profile", "repository", "runner_group_configuration_digest"]
+  },
+  "composite_digest": "sha256 of exact canonical object bytes; lowercase sha256:<hex>",
+  "future_schema_v7_claims": ["digest_profile", "baseline_composite_digest"],
+  "legacy_or_unknown_profile_behavior": "fail-closed when schema-v7 activation occurs",
+  "profile": "paygate-github-protection-v1",
+  "repository": "greenharborlabs/paygate-client",
+  "status": "inactive"
+}

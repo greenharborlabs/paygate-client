@@ -1,0 +1,17 @@
+{
+  "plan_path": "plans/close-wave5-critical-gaps.md",
+  "plan_hash": "d18f0a7ffa4d9445d40a3f11e921f73b3a1b35ec1f8dd079d21d4ae9dcd8ac3c",
+  "start_commit": "ffedfd8123825e01becd1820e81571d31e85ca49",
+  "tasks": {"W1-01": "completed", "W2-01": "completed", "W3-01": "completed"},
+  "blocked_reasons": {},
+  "gates": {"final_verification": "completed", "specialist_review": "completed"},
+  "touched_tests": ["tests/platform-smoke/test_wave5_qualification_contracts.py"],
+  "contract_registry": [
+    {"file": "scripts/check-rust-wave5-candidate.py", "name": "evidence index output", "signature": "--evidence-index-output PATH writes canonical seven-record index after successful validation"},
+    {"file": "scripts/check-rust-qualification-report.py", "name": "qualification report verifier", "signature": "--report PATH [--candidate PATH --candidate-sha256 PATH --index PATH --index-sha256 PATH --envelope PATH --envelope-sha256 PATH --validator-result PATH --validator-result-sha256 PATH --publication-epoch INTEGER]"},
+    {"file": "scripts/check-rust-qualification-report.py", "name": "accepted evidence markers", "signature": "exact BEGIN/END WAVE5 ACCEPTED EVIDENCE region with canonical JSON, checksum, acceptance URL"}
+    ,{"file": "scripts/check-rust-wave5-candidate.py", "name": "validator result acceptance clock", "signature": "validator result includes accepted_at_epoch equal to the injected acceptance epoch"}
+  ],
+  "agent_suite": {"coder": "greenharbor-backend-coder-python", "reviewer": "greenharbor-backend-reviewer-python", "architect": "greenharbor-backend-planning-architect-python"},
+  "test_cmd": ".venv/bin/pytest tests/platform-smoke/test_wave5_qualification_contracts.py"
+}

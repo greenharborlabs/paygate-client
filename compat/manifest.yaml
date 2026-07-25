@@ -1,0 +1,569 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "commit": "f56cbd0c4bdf07254282a52e51bcf88ff1f48478",
+    "python": "3.11",
+    "dependency_lock": "compat/python_oracle/bootstrap.lock",
+    "historical_dependency_lock": "compat/python_oracle/requirements.lock",
+    "wheelhouse": "compat/python_oracle/wheelhouse",
+    "offline": true
+  },
+  "controls": {
+    "clock": "2000-01-02T03:04:05Z",
+    "date": "2000-01-02",
+    "uuid_hex": "00112233445566778899aabbccddeeff",
+    "locale": "C.UTF-8",
+    "timezone": "UTC",
+    "home": "/oracle/home",
+    "xdg_config_home": "/oracle/xdg/config",
+    "xdg_state_home": "/oracle/xdg/state",
+    "xdg_cache_home": "/oracle/xdg/cache",
+    "keyring": "compat/fixtures/keyring.json",
+    "backend_responses": "compat/fixtures/backends.json",
+    "network": "deny"
+  },
+  "cases": [
+    {
+      "id": "cli.help",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "help stdout bytes and exit 0",
+      "evidence": [
+        "/case_evidence/cli.help"
+      ]
+    },
+    {
+      "id": "cli.no_args",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "no-argument help/error streams and exit code",
+      "evidence": [
+        "/case_evidence/cli.no_args"
+      ]
+    },
+    {
+      "id": "cli.fetch.envelope",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "sorted JSON envelope bytes, stdout/stderr split and exits",
+      "evidence": [
+        "/case_evidence/cli.fetch.envelope"
+      ]
+    },
+    {
+      "id": "cli.diagnose",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "diagnostic envelope fields and exit codes",
+      "evidence": [
+        "/case_evidence/cli.diagnose"
+      ]
+    },
+    {
+      "id": "config.file_env_cli_precedence",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "defaults < YAML < PAYGATE_* env < CLI",
+      "evidence": [
+        "/case_evidence/config.file_env_cli_precedence"
+      ]
+    },
+    {
+      "id": "config.voltage_env_precedence",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "voltage-env.sh only fills unset LND values; CLI remains highest",
+      "evidence": [
+        "/case_evidence/config.voltage_env_precedence"
+      ]
+    },
+    {
+      "id": "config.profile_paths",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "HOME/XDG and profile path derivation",
+      "evidence": [
+        "/case_evidence/config.profile_paths"
+      ]
+    },
+    {
+      "id": "challenge.l402",
+      "class": "must_match",
+      "owner": "W3-02",
+      "contract": "L402 header parsing and macaroon/invoice binding",
+      "evidence": [
+        "/case_evidence/challenge.l402"
+      ]
+    },
+    {
+      "id": "challenge.paygate",
+      "class": "must_match",
+      "owner": "W3-02",
+      "contract": "Paygate JSON/header parsing",
+      "evidence": [
+        "/case_evidence/challenge.paygate"
+      ]
+    },
+    {
+      "id": "challenge.dual",
+      "class": "must_match",
+      "owner": "W3-02",
+      "contract": "challenge selection precedence",
+      "evidence": [
+        "/case_evidence/challenge.dual"
+      ]
+    },
+    {
+      "id": "challenge.invalid",
+      "class": "must_match",
+      "owner": "W3-02",
+      "contract": "malformed and unsupported challenges fail closed",
+      "evidence": [
+        "/case_evidence/challenge.invalid"
+      ]
+    },
+    {
+      "id": "invoice.amount_hash",
+      "class": "must_match",
+      "owner": "W3-02",
+      "contract": "BOLT11 amount/payment-hash extraction on supported corpus",
+      "evidence": [
+        "/case_evidence/invoice.amount_hash"
+      ]
+    },
+    {
+      "id": "invoice.unvalidated_legacy",
+      "class": "unsupported_legacy_input",
+      "owner": "W3-02",
+      "contract": "legacy strings accepted without complete BOLT11 validation are rejected",
+      "evidence": [
+        "/case_evidence/invoice.unvalidated_legacy"
+      ]
+    },
+    {
+      "id": "credentials.l402",
+      "class": "must_match",
+      "owner": "W3-02",
+      "contract": "macaroon:preimage credential signing bytes",
+      "evidence": [
+        "/case_evidence/credentials.l402"
+      ]
+    },
+    {
+      "id": "credentials.paygate",
+      "class": "must_match",
+      "owner": "W3-02",
+      "contract": "compact sorted credential JSON and digest inputs",
+      "evidence": [
+        "/case_evidence/credentials.paygate"
+      ]
+    },
+    {
+      "id": "credentials.show_found",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "show returns one redacted cached credential without authorization or keyring secret bytes",
+      "evidence": [
+        "/case_evidence/credentials.show_found"
+      ]
+    },
+    {
+      "id": "credentials.show_missing",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "show returns a stable not-found envelope and nonzero exit without secret disclosure",
+      "evidence": [
+        "/case_evidence/credentials.show_missing"
+      ]
+    },
+    {
+      "id": "policy.approve_deny",
+      "class": "must_match",
+      "owner": "W3-03",
+      "contract": "service, amount, fee and daily-budget decisions",
+      "evidence": [
+        "/case_evidence/policy.approve_deny"
+      ]
+    },
+    {
+      "id": "cache.schema",
+      "class": "must_match",
+      "owner": "W3-03",
+      "contract": "sorted indented JSON with trailing newline, permissions and expiry",
+      "evidence": [
+        "/case_evidence/cache.schema"
+      ]
+    },
+    {
+      "id": "ledger.schema_locking",
+      "class": "must_match",
+      "owner": "W3-03",
+      "contract": "date entry schema, atomic replace, 0600 files and advisory lock",
+      "evidence": [
+        "/case_evidence/ledger.schema_locking"
+      ]
+    },
+    {
+      "id": "ledger.reserve_commit",
+      "class": "must_match",
+      "owner": "W3-03",
+      "contract": "reservation becomes committed after verified submission",
+      "evidence": [
+        "/case_evidence/ledger.reserve_commit"
+      ]
+    },
+    {
+      "id": "ledger.pre_submission_failure",
+      "class": "must_match",
+      "owner": "W3-03",
+      "contract": "reservation rolls back before wallet submission",
+      "evidence": [
+        "/case_evidence/ledger.pre_submission_failure"
+      ]
+    },
+    {
+      "id": "ledger.submitted_success",
+      "class": "must_match",
+      "owner": "W3-03",
+      "contract": "reservation commits on proven payment success",
+      "evidence": [
+        "/case_evidence/ledger.submitted_success"
+      ]
+    },
+    {
+      "id": "ledger.submitted_definite_failure",
+      "class": "must_match",
+      "owner": "W3-03",
+      "contract": "reservation rolls back only on proven no-payment failure",
+      "evidence": [
+        "/case_evidence/ledger.submitted_definite_failure"
+      ]
+    },
+    {
+      "id": "ledger.submitted_ambiguous",
+      "class": "intentional_security_delta",
+      "owner": "W3-03",
+      "contract": "unknown post-submission result stays reserved; never silently rolls back",
+      "evidence": [
+        "/case_evidence/ledger.submitted_ambiguous"
+      ]
+    },
+    {
+      "id": "payer.cancellation_pre_submission",
+      "class": "must_match",
+      "owner": "W2-02",
+      "contract": "cancellation before submission is safe to cancel and roll back",
+      "evidence": [
+        "/case_evidence/payer.cancellation_pre_submission"
+      ]
+    },
+    {
+      "id": "payer.cancellation_post_submission",
+      "class": "intentional_security_delta",
+      "owner": "W2-02",
+      "contract": "cancellation after submission yields unknown outcome and preserves reservation",
+      "evidence": [
+        "/case_evidence/payer.cancellation_post_submission"
+      ]
+    },
+    {
+      "id": "payer.test_mode",
+      "class": "must_match",
+      "owner": "W4-01",
+      "contract": "fixture preimage, fee and hash result",
+      "evidence": [
+        "/case_evidence/payer.test_mode"
+      ]
+    },
+    {
+      "id": "payer.lnd_rest",
+      "class": "must_match",
+      "owner": "W4-02",
+      "contract": "URL/body/macaroon/TLS/timeout and NDJSON response behavior",
+      "evidence": [
+        "/case_evidence/payer.lnd_rest"
+      ]
+    },
+    {
+      "id": "payer.phoenixd",
+      "class": "must_match",
+      "owner": "W4-03",
+      "contract": "form/basic-auth/TLS/proxy/timeout and result behavior",
+      "evidence": [
+        "/case_evidence/payer.phoenixd"
+      ]
+    },
+    {
+      "id": "payer.breez",
+      "class": "must_match",
+      "owner": "W4-04",
+      "contract": "connect/prepare/send/completion/disconnect mapping",
+      "evidence": [
+        "/case_evidence/payer.breez"
+      ]
+    },
+    {
+      "id": "errors.envelope",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "stable codes/messages/paid marker and exit mapping",
+      "evidence": [
+        "/case_evidence/errors.envelope"
+      ]
+    },
+    {
+      "id": "redaction.user_success_hash",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "successful requested envelope retains paymentHash",
+      "evidence": [
+        "/case_evidence/redaction.user_success_hash"
+      ]
+    },
+    {
+      "id": "redaction.trace_hash",
+      "class": "intentional_security_delta",
+      "owner": "W3-01",
+      "contract": "traces/errors/upstream bodies never serialize payment hashes or secrets",
+      "evidence": [
+        "/case_evidence/redaction.trace_hash"
+      ]
+    },
+    {
+      "id": "trace.events",
+      "class": "must_match",
+      "owner": "W3-01",
+      "contract": "event names, ordering and controlled timestamps",
+      "evidence": [
+        "/case_evidence/trace.events"
+      ]
+    },
+    {
+      "id": "http.retry_flow",
+      "class": "must_match",
+      "owner": "W5-01",
+      "contract": "initial 402, pay, credential retry and cache behavior",
+      "evidence": [
+        "/case_evidence/http.retry_flow"
+      ]
+    },
+    {
+      "id": "publication.python_artifact",
+      "class": "must_match",
+      "owner": "W6-01",
+      "contract": "last Python wheel/sdist remains installable rollback artifact",
+      "evidence": [
+        "/case_evidence/publication.python_artifact"
+      ]
+    }
+  ],
+  "inventory": [
+    {
+      "disposition": "port",
+      "owner": "W3-01",
+      "paths": [
+        "paygate_client/cli.py",
+        "paygate_client/config.py",
+        "paygate_client/diagnostics.py",
+        "paygate_client/redaction.py",
+        "paygate_client/trace.py"
+      ]
+    },
+    {
+      "disposition": "port",
+      "owner": "W3-02",
+      "paths": [
+        "paygate_client/challenges.py",
+        "paygate_client/credentials.py",
+        "paygate_client/invoices.py"
+      ]
+    },
+    {
+      "disposition": "port",
+      "owner": "W3-03",
+      "paths": [
+        "paygate_client/ledger.py",
+        "paygate_client/policy.py",
+        "paygate_client/session_cache.py"
+      ]
+    },
+    {
+      "disposition": "port",
+      "owner": "W5-01",
+      "paths": [
+        "paygate_client/__init__.py",
+        "paygate_client/http.py",
+        "paygate_client/orchestrator.py",
+        "paygate_client/payers/__init__.py",
+        "paygate_client/payers/base.py"
+      ]
+    },
+    {
+      "disposition": "port",
+      "owner": "W4-01",
+      "paths": [
+        "paygate_client/payers/test_mode.py"
+      ]
+    },
+    {
+      "disposition": "port",
+      "owner": "W4-02",
+      "paths": [
+        "paygate_client/payers/lnd_rest.py"
+      ]
+    },
+    {
+      "disposition": "port",
+      "owner": "W4-03",
+      "paths": [
+        "paygate_client/payers/phoenixd.py"
+      ]
+    },
+    {
+      "disposition": "port",
+      "owner": "W4-04",
+      "paths": [
+        "paygate_client/payers/breez.py"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W3-01",
+      "paths": [
+        "tests/test_cli.py",
+        "tests/test_cli_smoke.py",
+        "tests/test_config.py",
+        "tests/test_diagnostics.py",
+        "tests/test_redaction.py"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W3-02",
+      "paths": [
+        "tests/test_challenges.py",
+        "tests/test_credentials.py",
+        "tests/test_invoices.py",
+        "tests/fixtures/paygate/dual_challenge.json",
+        "tests/fixtures/paygate/l402_challenge.json",
+        "tests/fixtures/paygate/mpp_challenge.json",
+        "tests/fixtures/paygate/mpp_credential.json"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W3-03",
+      "paths": [
+        "tests/test_ledger.py",
+        "tests/test_policy.py",
+        "tests/test_session_cache.py"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W4-01",
+      "paths": [
+        "tests/test_payers_test_mode.py"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W4-02",
+      "paths": [
+        "tests/test_payers_lnd_rest.py"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W4-03",
+      "paths": [
+        "tests/test_payers_phoenixd.py"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W4-04",
+      "paths": [
+        "tests/test_payers_breez.py"
+      ]
+    },
+    {
+      "disposition": "neutral_fixture",
+      "owner": "W5-01",
+      "paths": [
+        "tests/__init__.py",
+        "tests/test_orchestrator.py",
+        "tests/test_paygate_fixtures.py"
+      ]
+    },
+    {
+      "disposition": "replace",
+      "owner": "W6-01",
+      "paths": [
+        "tests/test_package_metadata.py",
+        "scripts/check-dist.sh",
+        "scripts/typecheck.sh",
+        ".github/workflows/ci.yml",
+        ".github/workflows/publish.yml"
+      ]
+    },
+    {
+      "disposition": "rollback_only",
+      "owner": "W6-01",
+      "paths": [
+        "scripts/breez-connect-check.py",
+        "scripts/breez-create-invoice.py",
+        "scripts/breez-payment-history.py",
+        "scripts/breez-payment-history.sh",
+        "scripts/breez-preimage-doctor.py",
+        "scripts/check-breez-wallet.sh"
+      ]
+    },
+    {
+      "disposition": "retire",
+      "owner": "W7-01",
+      "paths": [
+        "scripts/setup-voltage-paygate.sh"
+      ]
+    },
+    {
+      "disposition": "replace",
+      "owner": "W6-01",
+      "paths": [
+        "README.md",
+        "PYPI_README.md",
+        "docs/dev-setup.md",
+        "docs/payer-backend-compatibility.md",
+        "docs/phoenixd-spike.md",
+        "docs/releasing.md",
+        "examples/paygate-client.yaml",
+        ".gitignore",
+        ".vscode/settings.json",
+        "pyproject.toml"
+      ]
+    },
+    {
+      "disposition": "rollback_only",
+      "owner": "W6-01",
+      "paths": [
+        "LICENSE"
+      ]
+    },
+    {
+      "disposition": "replace",
+      "owner": "W7-01",
+      "paths": [
+        "plans/bind-validated-bolt11-amount-and-payment-hash-to-every-policy-approved-payment-before-wallet-submission.md",
+        "plans/breez-spark-payer-backend.md",
+        "plans/breez-spark-paygate-findings.md",
+        "plans/initial-plan.md",
+        "plans/paygate-client-v1.md",
+        "plans/public-release-and-repository-polish.md",
+        "plans/security-review-remediation.md",
+        "plans/voltage-node-setup.md",
+        "plans/voltage-payer-node/v1-plan.md",
+        "reports/greenharbor-code-review-full-2026-07-17.md"
+      ]
+    }
+  ]
+}

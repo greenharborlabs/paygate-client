@@ -1,0 +1,1 @@
+{"purpose":"runner-result","keys":[{"id":"runner-v1","issuer":"reviewed-protected-runner","not_before":"2026-01-01T00:00:00Z","not_after":"2027-01-01T00:00:00Z","revoked":false,"public_key":"security/payment-canary-trust/runner-v1.pub"}]}
