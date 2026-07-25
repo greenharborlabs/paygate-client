@@ -437,6 +437,56 @@ def test_workflow_records_attested_bundle_metadata() -> None:
     assert "retention-days: 90" in workflow
 
 
+def test_integration_qualification_checks_out_the_frozen_oracle_baseline() -> None:
+    workflow_path = ROOT / ".github/workflows/rust-integration-qualification.yml"
+    parsed = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
+    checkout = parsed["jobs"]["qualification"]["steps"][0]
+
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"]["fetch-depth"] == "0"
+    assert checkout["with"]["persist-credentials"] == "false"
+
+
+def test_linux_build_uses_the_preinstalled_toolchain_without_rustup_proxies() -> None:
+    workflow_path = ROOT / ".github/workflows/rust-platform.yml"
+    parsed = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
+    build_steps = parsed["jobs"]["build"]["steps"]
+    bundle_steps = [
+        step
+        for step in build_steps
+        if step.get("name") == "Build an immutable, attested target bundle"
+    ]
+    assert len(bundle_steps) == 1
+    run_script = bundle_steps[0]["run"]
+    _, case_marker, after_case_marker = run_script.partition('case "$1" in')
+    assert case_marker
+    target_mappings, esac_marker, _ = after_case_marker.partition("esac")
+    assert esac_marker
+    assert [line.strip() for line in target_mappings.strip().splitlines()] == [
+        "x86_64-unknown-linux-gnu) host=x86_64 ;;",
+        "aarch64-unknown-linux-gnu) host=aarch64 ;;",
+        '*) echo "unsupported Linux qualification target: $1" >&2; exit 1 ;;',
+    ]
+
+    assert "docker run --rm --network none" in run_script
+    assert '--volume "$QUALIFICATION_CARGO_HOME:/cargo-home:ro"' in run_script
+    assert (
+        'toolchain="/usr/local/rustup/toolchains/'
+        '1.88.0-${host}-unknown-linux-gnu"' in run_script
+    )
+    assert 'test -x "$toolchain/bin/rustc"' in run_script
+    assert 'test -x "$toolchain/bin/cargo"' in run_script
+    assert (
+        '"$toolchain/bin/rustc" --version | grep -Eq "^rustc 1\\\\.88\\\\.0 "'
+        in run_script
+    )
+    assert 'PATH="$toolchain/bin:$PATH"' in run_script
+    assert (
+        'RUSTC="$toolchain/bin/rustc" cargo build '
+        '--locked --offline --release --target "$1" --target-dir target' in run_script
+    )
+
+
 def test_canary_validator_requires_distinct_result_and_ledger_signatures(
     tmp_path: Path,
 ) -> None:
