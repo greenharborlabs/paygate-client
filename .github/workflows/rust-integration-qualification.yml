@@ -38,6 +38,7 @@ jobs:
           mkdir -p "$QUALIFICATION_CARGO_HOME"
           rustup toolchain install 1.88.0 --profile minimal
           CARGO_HOME="$QUALIFICATION_CARGO_HOME" cargo +1.88.0 fetch --locked
+          docker build --platform linux/amd64 -t paygate-python-oracle:3.11 -f compat/python_oracle/Dockerfile compat/python_oracle
           # The advisory snapshot is reviewed data; this phase may refresh it
           # only through a separately reviewed maintenance change.
       - name: Replay semantic Python compatibility and Rust integration gates
@@ -53,7 +54,7 @@ jobs:
           python3 scripts/check-rust-licenses.py --self-test
           python3 scripts/check-rust-licenses.py cargo-metadata.json
           python3 scripts/check-rust-advisories.py --lock Cargo.lock --snapshot security/advisory-snapshot.json
-          python3 -m compat.python_oracle.replay > python-oracle-evidence.json
+          docker run --rm --platform linux/amd64 --network none --user "$(id -u):$(id -g)" -e ORACLE_OS_NETWORK_BOUNDARY=docker-none -e PYTHONPATH=/workspace -v "$GITHUB_WORKSPACE:/workspace:ro" -w /workspace paygate-python-oracle:3.11 python -m compat.python_oracle.replay > python-oracle-evidence.json
           python3 scripts/extract-python-semantic-evidence.py python-oracle-evidence.json python-semantic-evidence.json
           cargo +1.88.0 build --locked --offline --bin paygate
           binary_sha256="$(sha256sum target/debug/paygate | awk '{print $1}')"

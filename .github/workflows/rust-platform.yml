@@ -140,6 +140,19 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.11.14"
+      - name: Prepare controlled native keyring environment
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends dbus-x11 gnome-keyring libsecret-1-dev
+          fi
+          python -m venv "$RUNNER_TEMP/paygate-native-keyring"
+          controlled_python="$RUNNER_TEMP/paygate-native-keyring/bin/python"
+          python scripts/bootstrap-native-keyring.py --python "$controlled_python" --install-only
       - name: Prime an isolated locked Cargo cache
         env:
           QUALIFICATION_CARGO_HOME: ${{ runner.temp }}/paygate-cargo-home
@@ -234,10 +247,24 @@ jobs:
             runtime/paygate --help
           fi
           python3 scripts/check-rust-linkage.py "$TARGET" runtime/paygate
-          python3 -m venv "$RUNNER_TEMP/paygate-native-keyring"
           controlled_python="$RUNNER_TEMP/paygate-native-keyring/bin/python"
-          python3 scripts/bootstrap-native-keyring.py --python "$controlled_python"
-          PAYGATE_QUALIFICATION_PYTHON="$controlled_python" PAYGATE_QUALIFICATION_KEYRING_MODE=native CARGO_HOME="$QUALIFICATION_CARGO_HOME" CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test keyring_qualification -- --ignored
+          if [[ "$TARGET" == *-unknown-linux-gnu ]]; then
+            keyring_home="$RUNNER_TEMP/paygate-native-keyring-home"
+            mkdir -m 700 "$keyring_home"
+            # The single-quoted child script intentionally expands only inside the D-Bus session.
+            # shellcheck disable=SC2016
+            dbus-run-session -- bash -euo pipefail -c '
+              export HOME="$1"
+              controlled_python="$2"
+              qualification_cargo_home="$3"
+              eval "$(printf "%s\n" "paygate-ephemeral-qualification" | gnome-keyring-daemon --unlock --components=secrets)"
+              "$controlled_python" scripts/bootstrap-native-keyring.py --python "$controlled_python" --verify-only
+              PAYGATE_QUALIFICATION_PYTHON="$controlled_python" PAYGATE_QUALIFICATION_KEYRING_MODE=native CARGO_HOME="$qualification_cargo_home" CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test keyring_qualification -- --ignored
+            ' bash "$keyring_home" "$controlled_python" "$QUALIFICATION_CARGO_HOME"
+          else
+            "$controlled_python" scripts/bootstrap-native-keyring.py --python "$controlled_python" --verify-only
+            PAYGATE_QUALIFICATION_PYTHON="$controlled_python" PAYGATE_QUALIFICATION_KEYRING_MODE=native CARGO_HOME="$QUALIFICATION_CARGO_HOME" CARGO_NET_OFFLINE=true cargo +1.88.0 test --locked --offline --test keyring_qualification -- --ignored
+          fi
           CARGO_HOME="$QUALIFICATION_CARGO_HOME" CARGO_NET_OFFLINE=true PAYGATE_QUALIFICATION_TARGET="$TARGET" cargo +1.88.0 test --locked --offline --features breez-qualification --test breez_lifecycle_qualification -- --ignored
       - name: Write executor evidence
         if: ${{ success() }}

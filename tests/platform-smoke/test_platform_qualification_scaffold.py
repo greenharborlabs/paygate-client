@@ -4,6 +4,7 @@ These deliberately inspect repository configuration: native runners and GitHub
 artifacts are unavailable to unit tests and must never be faked locally.
 """
 
+import ast
 import json
 import os
 import re
@@ -12,12 +13,16 @@ import sys
 import textwrap
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/rust-platform.yml"
 DOCS = ROOT / "docs/platform-qualification.md"
 RUNNERS = ROOT / "infra/runners/platform-qualification.yml"
 ACTION = ROOT / ".github/actions/aggregate-rust-platform/action.yml"
 STUB = ROOT / "tests/platform-smoke/stub"
+KEYRING_BOOTSTRAP = ROOT / "scripts/bootstrap-native-keyring.py"
+KEYRING_REQUIREMENTS = ROOT / "compat/native-keyring-requirements.txt"
 
 TARGETS = (
     "x86_64-unknown-linux-gnu",
@@ -30,6 +35,15 @@ TARGETS = (
 def read(path: Path) -> str:
     assert path.is_file(), f"missing qualification scaffold: {path.relative_to(ROOT)}"
     return path.read_text(encoding="utf-8")
+
+
+def qualification_steps() -> list[dict[str, object]]:
+    workflow = yaml.load(read(WORKFLOW), Loader=yaml.BaseLoader)
+    return workflow["jobs"]["qualify-runtime"]["steps"]
+
+
+def named_step(name: str) -> dict[str, object]:
+    return next(step for step in qualification_steps() if step.get("name") == name)
 
 
 def embedded_python(source: str, marker: str) -> str:
@@ -109,6 +123,113 @@ def test_artifacts_are_digest_and_provenance_verified_before_native_execution() 
     assert "python3 scripts/check-rust-linkage.py" in workflow
     assert "--test keyring_qualification -- --ignored" in workflow
     assert "--test breez_lifecycle_qualification -- --ignored" in workflow
+
+
+def test_native_keyring_uses_pinned_cross_platform_python_and_dependencies() -> None:
+    bootstrap = read(KEYRING_BOOTSTRAP)
+    requirements = read(KEYRING_REQUIREMENTS)
+    setup = next(
+        step
+        for step in qualification_steps()
+        if "setup-python@" in step.get("uses", "")
+    )
+    preparation = named_step("Prepare controlled native keyring environment")["run"]
+
+    assert setup == {
+        "uses": "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+        "with": {"python-version": "3.11.14"},
+    }
+    python_pin = ast.literal_eval(
+        re.search(r"^PYTHON_PIN = (.+)$", bootstrap, re.MULTILINE).group(1)
+    )
+    assert python_pin == (3, 11, 14)
+    assert 'python -m venv "$RUNNER_TEMP/paygate-native-keyring"' in preparation
+    assert "compat/python_oracle/wheelhouse" not in preparation
+    assert "compat/python_oracle/wheelhouse" not in bootstrap
+    assert "compat/native-keyring-requirements.txt" in bootstrap
+    assert "--only-binary=:all:" in bootstrap
+    assert "--require-hashes" in bootstrap
+
+    expected = {
+        "keyring": "25.7.0",
+        "jaraco.classes": "3.4.0",
+        "jaraco.context": "6.1.2",
+        "jaraco.functools": "4.6.0",
+        "more-itertools": "11.1.0",
+        "importlib-metadata": "9.0.0",
+        "zipp": "4.1.0",
+        "backports.tarfile": "1.2.0",
+        "secretstorage": "3.5.0",
+        "jeepney": "0.9.0",
+        "cryptography": "49.0.0",
+        "cffi": "2.1.0",
+        "pycparser": "3.0",
+    }
+    pinned = dict(re.findall(r"^([\w.-]+)==([\d.]+)", requirements, re.MULTILINE))
+    assert pinned == expected
+    assert requirements.count("--hash=sha256:") == 15
+    architecture_hashes = {
+        "cryptography": {
+            "2afe9051da7ae7bd5905da5a949280c7d2bb75682e188f650a9d0f2756b834c6",
+            "53ecee2e23f7169b6117e99fc8a944e5e50f79e69758a83b52a00cb98ab2b2d2",
+        },
+        "cffi": {
+            "88023dfe18799507b73f1dbb0d14326a17465de1bc9c9c7655c22845e9ddc3a2",
+            "aa7a1b53a2a4452ada2d1b5dade9960b2522f1e61293a811a077439e39029565",
+        },
+    }
+    for package, expected_hashes in architecture_hashes.items():
+        block = re.search(
+            rf"^{package}==.*?(?=^[\w.-]+==|\Z)",
+            requirements,
+            re.MULTILINE | re.DOTALL,
+        ).group()
+        assert (
+            set(re.findall(r"--hash=sha256:([0-9a-f]{64})", block)) == expected_hashes
+        )
+
+
+def test_native_keyring_fails_closed_on_metadata_and_backend_selection() -> None:
+    bootstrap = read(KEYRING_BOOTSTRAP)
+    rust_test = read(ROOT / "tests/keyring_qualification.rs")
+    steps = qualification_steps()
+    preparation = named_step("Prepare controlled native keyring environment")["run"]
+    runtime = named_step("Reverify bundle bindings and run native smoke")["run"]
+
+    for source in (bootstrap, rust_test):
+        assert 'importlib.metadata.version("keyring")' in source
+        assert "keyring.__version__" not in source
+        for forbidden in ("null", "file", "chainer", "fail"):
+            assert forbidden in source
+    assert (
+        "sudo apt-get install --yes --no-install-recommends "
+        "dbus-x11 gnome-keyring libsecret-1-dev"
+    ) in preparation
+    assert (
+        'python scripts/bootstrap-native-keyring.py --python "$controlled_python" '
+        "--install-only"
+    ) in preparation
+    session_start = runtime.index("dbus-run-session -- bash -euo pipefail -c '")
+    session_end = runtime.index(
+        '\' bash "$keyring_home" "$controlled_python"', session_start
+    )
+    session = runtime[session_start:session_end]
+    daemon = "gnome-keyring-daemon --unlock --components=secrets"
+    verify = (
+        'scripts/bootstrap-native-keyring.py --python "$controlled_python" '
+        "--verify-only"
+    )
+    rust_probe = "cargo +1.88.0 test --locked --offline --test keyring_qualification"
+    assert "dbus-run-session -- bash -euo pipefail -c" in session
+    assert daemon in session
+    assert verify in session
+    assert rust_probe in session
+    assert "PAYGATE_QUALIFICATION_KEYRING_MODE=native" in session
+    assert session.index(daemon) < session.index(verify) < session.index(rust_probe)
+    assert "--install-only" not in session
+    assert steps.index(
+        named_step("Prepare controlled native keyring environment")
+    ) < steps.index(named_step("Reverify bundle bindings and run native smoke"))
 
 
 def test_artifact_and_provenance_rejection_paths_are_non_bypassable() -> None:

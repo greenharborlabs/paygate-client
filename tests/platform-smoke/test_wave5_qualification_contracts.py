@@ -447,6 +447,51 @@ def test_integration_qualification_checks_out_the_frozen_oracle_baseline() -> No
     assert checkout["with"]["persist-credentials"] == "false"
 
 
+def test_integration_oracle_replay_uses_qualified_docker_boundary() -> None:
+    workflow_path = ROOT / ".github/workflows/rust-integration-qualification.yml"
+    parsed = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
+    steps = parsed["jobs"]["qualification"]["steps"]
+    preparation = next(
+        step
+        for step in steps
+        if step.get("name")
+        == "Prime a fresh locked Cargo home (network preparation only)"
+    )["run"]
+    all_run_scripts = "\n".join(step.get("run", "") for step in steps)
+    qualification = next(
+        step
+        for step in steps
+        if step.get("name")
+        == "Replay semantic Python compatibility and Rust integration gates"
+    )["run"]
+
+    assert (
+        "docker build --platform linux/amd64 "
+        "-t paygate-python-oracle:3.11 "
+        "-f compat/python_oracle/Dockerfile compat/python_oracle" in preparation
+    )
+    assert "compat.python_oracle.replay" not in preparation
+    assert all_run_scripts.count("compat.python_oracle.replay") == 1
+    assert qualification.count("python -m compat.python_oracle.replay") == 1
+    assert "python3 -m compat.python_oracle.replay" not in qualification
+    replay = next(
+        line.strip()
+        for line in qualification.splitlines()
+        if "python -m compat.python_oracle.replay" in line
+    )
+    assert replay.startswith("docker run --rm --platform linux/amd64 --network none ")
+    assert '--user "$(id -u):$(id -g)"' in replay
+    assert "-e ORACLE_OS_NETWORK_BOUNDARY=docker-none" in replay
+    assert "-e PYTHONPATH=/workspace" in replay
+    assert '-v "$GITHUB_WORKSPACE:/workspace:ro"' in replay
+    assert "-w /workspace" in replay
+    assert "paygate-python-oracle:3.11" in replay
+    assert replay.endswith(
+        "python -m compat.python_oracle.replay > python-oracle-evidence.json"
+    )
+    assert "--regenerate-golden" not in all_run_scripts
+
+
 def test_linux_build_uses_the_preinstalled_toolchain_without_rustup_proxies() -> None:
     workflow_path = ROOT / ".github/workflows/rust-platform.yml"
     parsed = yaml.load(workflow_path.read_text(), Loader=yaml.BaseLoader)
