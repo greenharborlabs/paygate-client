@@ -80,8 +80,135 @@ pub struct RawPaymentResult {
     pub fee_sats: u64,
     pub payment_hash: Option<String>,
     pub preimage_hex: Option<String>,
-    pub outcome: SubmissionOutcome,
 }
+
+/// A condition discovered after the backend has returned confirmed payment
+/// material.  Conditions are deliberately accumulated: neither policy nor
+/// cleanup failures are allowed to erase evidence that money moved.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PostSubmitCondition {
+    FinalFeeExceeded,
+    DisconnectFailed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LedgerAction {
+    Release,
+    Commit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AttemptExitClass {
+    Success,
+    RuntimeFailure,
+}
+
+/// Monotonic result of one payment attempt.
+///
+/// Errors are values inside the submission state, rather than the outer return
+/// type, so callers cannot accidentally turn an ambiguous send into a safe
+/// retry. Only `Confirmed` carries proof material and it never transitions back
+/// to an unpaid state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PaymentAttemptOutcome {
+    NotSubmitted(PaymentError),
+    SubmittedFailedFinal(PaymentError),
+    SubmittedUnknown(PaymentError),
+    Confirmed {
+        raw: RawPaymentResult,
+        post_submit_conditions: Vec<PostSubmitCondition>,
+    },
+}
+
+impl PaymentAttemptOutcome {
+    pub fn confirmed(raw: RawPaymentResult) -> Self {
+        Self::Confirmed {
+            raw,
+            post_submit_conditions: Vec::new(),
+        }
+    }
+
+    pub fn add_post_submit_condition(&mut self, condition: PostSubmitCondition) {
+        if let Self::Confirmed {
+            post_submit_conditions,
+            ..
+        } = self
+            && !post_submit_conditions.contains(&condition)
+        {
+            post_submit_conditions.push(condition);
+        }
+    }
+
+    pub fn post_submit_conditions(&self) -> &[PostSubmitCondition] {
+        match self {
+            Self::Confirmed {
+                post_submit_conditions,
+                ..
+            } => post_submit_conditions,
+            _ => &[],
+        }
+    }
+
+    pub fn confirmed_raw(&self) -> Option<&RawPaymentResult> {
+        match self {
+            Self::Confirmed { raw, .. } => Some(raw),
+            _ => None,
+        }
+    }
+
+    pub const fn is_paid(&self) -> bool {
+        matches!(self, Self::Confirmed { .. })
+    }
+
+    pub const fn ledger_action(&self) -> LedgerAction {
+        match self {
+            Self::NotSubmitted(_) | Self::SubmittedFailedFinal(_) => LedgerAction::Release,
+            Self::SubmittedUnknown(_) | Self::Confirmed { .. } => LedgerAction::Commit,
+        }
+    }
+
+    pub const fn authorization_eligible(&self) -> bool {
+        matches!(self, Self::Confirmed { .. })
+    }
+
+    pub const fn retry_is_safe(&self) -> bool {
+        matches!(self, Self::NotSubmitted(_))
+    }
+
+    pub fn exit_class(&self) -> AttemptExitClass {
+        match self {
+            Self::Confirmed {
+                post_submit_conditions,
+                ..
+            } if post_submit_conditions.is_empty() => AttemptExitClass::Success,
+            _ => AttemptExitClass::RuntimeFailure,
+        }
+    }
+
+    pub fn primary_error(&self) -> Option<&PaymentError> {
+        match self {
+            Self::NotSubmitted(error)
+            | Self::SubmittedFailedFinal(error)
+            | Self::SubmittedUnknown(error) => Some(error),
+            Self::Confirmed {
+                post_submit_conditions,
+                ..
+            } if post_submit_conditions.contains(&PostSubmitCondition::DisconnectFailed) => {
+                Some(&CONFIRMED_CLEANUP_ERROR)
+            }
+            Self::Confirmed {
+                post_submit_conditions,
+                ..
+            } if post_submit_conditions.contains(&PostSubmitCondition::FinalFeeExceeded) => {
+                Some(&CONFIRMED_FEE_ERROR)
+            }
+            Self::Confirmed { .. } => None,
+        }
+    }
+}
+
+static CONFIRMED_CLEANUP_ERROR: PaymentError = PaymentError::Transport;
+static CONFIRMED_FEE_ERROR: PaymentError = PaymentError::FeeExceeded;
 
 /// Proof-bound payment result safe for credential construction.
 ///
@@ -139,7 +266,7 @@ impl VerifiedPaymentResult {
     }
 }
 
-#[derive(Debug, Error, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum PaymentError {
     #[error("payer implementation is not available")]
     NotImplemented,
@@ -193,7 +320,7 @@ pub trait RealPayer: Send + Sync {
         invoice: &ValidatedBolt11,
         max_fee_sats: u64,
         cancellation: CancellationSemantics,
-    ) -> Result<RawPaymentResult, PaymentError>;
+    ) -> PaymentAttemptOutcome;
 
     async fn disconnect(&self) -> Result<(), PaymentError>;
 }
@@ -202,9 +329,6 @@ pub fn verify_payment_result(
     invoice: &ValidatedBolt11,
     raw: RawPaymentResult,
 ) -> Result<VerifiedPaymentResult, PaymentError> {
-    if raw.outcome != SubmissionOutcome::Succeeded {
-        return Err(PaymentError::MissingProof);
-    }
     if raw.amount_sats != invoice.amount_sats() {
         return Err(PaymentError::ProofMismatch);
     }
@@ -230,7 +354,7 @@ pub fn verify_payment_result(
         fee_sats: raw.fee_sats,
         payment_hash,
         preimage,
-        outcome: raw.outcome,
+        outcome: SubmissionOutcome::Succeeded,
     })
 }
 

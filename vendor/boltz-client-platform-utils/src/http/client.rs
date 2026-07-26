@@ -1,0 +1,155 @@
+//! HTTP client using reqwest for both native and WASM targets.
+
+use std::collections::HashMap;
+use std::time::Duration;
+
+use super::{HttpClient, HttpError, HttpResponse, REQUEST_TIMEOUT};
+
+/// HTTP client implementation backed by reqwest.
+pub struct ReqwestHttpClient {
+    client: reqwest::Client,
+}
+
+impl ReqwestHttpClient {
+    /// Create a new `ReqwestHttpClient` with an optional user agent.
+    ///
+    /// Native targets layer HTTP/2 and TCP keepalives on top of reqwest's
+    /// defaults so a long-lived shared client survives intermediaries that
+    /// reap idle HTTP/2 flows. On WASM the browser owns connection management
+    /// and these knobs aren't exposed.
+    ///
+    /// The `user_agent` is applied on native only. In the browser a
+    /// script-set `User-Agent` is honored by Firefox/Safari but dropped by
+    /// Chrome; because it is not CORS-safelisted, setting it turns otherwise
+    /// simple requests into preflighted ones, and some third-party endpoints
+    /// (e.g. the USDT0 deployments API) reject the preflight. Browsers send
+    /// their own `User-Agent` regardless, so omitting it loses nothing. This
+    /// is a deliberate divergence from the upstream `spark-sdk` client, which
+    /// only talks to servers it controls and so can keep the override.
+    // `user_agent` is unused on WASM by design (see above); the signature is
+    // kept uniform across targets and to match the upstream client.
+    #[cfg_attr(
+        all(target_family = "wasm", target_os = "unknown"),
+        expect(clippy::needless_pass_by_value, unused_variables)
+    )]
+    pub fn new(user_agent: Option<String>) -> Self {
+        let builder = reqwest::Client::builder();
+
+        #[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+        let builder = {
+            let mut builder = builder;
+            if let Some(ua) = user_agent {
+                builder = builder.user_agent(ua);
+            }
+            builder
+                .tcp_keepalive(Some(Duration::from_secs(60)))
+                .http2_keep_alive_interval(Duration::from_secs(30))
+                .http2_keep_alive_timeout(Duration::from_secs(10))
+                .http2_keep_alive_while_idle(true)
+        };
+
+        let client = match builder.build() {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::error!("Failed to create reqwest client: {e}");
+                panic!("Failed to create reqwest client: {e}");
+            }
+        };
+        Self { client }
+    }
+}
+
+impl Default for ReqwestHttpClient {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
+#[macros::async_trait]
+impl HttpClient for ReqwestHttpClient {
+    async fn get(
+        &self,
+        url: String,
+        headers: Option<HashMap<String, String>>,
+    ) -> Result<HttpResponse, HttpError> {
+        tracing::debug!("Making GET request to: {url}");
+        let mut req = self
+            .client
+            .get(&url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT));
+
+        if let Some(headers) = headers {
+            for (key, value) in &headers {
+                req = req.header(key, value);
+            }
+        }
+
+        let response = req.send().await?;
+        let status = response.status().as_u16();
+        let body = response.text().await?;
+        tracing::debug!("Received response, status: {status}");
+        tracing::trace!("raw response body: {body}");
+
+        Ok(HttpResponse { status, body })
+    }
+
+    async fn post(
+        &self,
+        url: String,
+        headers: Option<HashMap<String, String>>,
+        body: Option<String>,
+    ) -> Result<HttpResponse, HttpError> {
+        tracing::debug!("Making POST request to: {url}");
+        let mut req = self
+            .client
+            .post(&url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT));
+
+        if let Some(headers) = headers {
+            for (key, value) in &headers {
+                req = req.header(key, value);
+            }
+        }
+        if let Some(body) = body {
+            req = req.body(body);
+        }
+
+        let response = req.send().await?;
+        let status = response.status().as_u16();
+        let body = response.text().await?;
+        tracing::debug!("Received response, status: {status}");
+        tracing::trace!("raw response body: {body}");
+
+        Ok(HttpResponse { status, body })
+    }
+
+    async fn delete(
+        &self,
+        url: String,
+        headers: Option<HashMap<String, String>>,
+        body: Option<String>,
+    ) -> Result<HttpResponse, HttpError> {
+        tracing::debug!("Making DELETE request to: {url}");
+        let mut req = self
+            .client
+            .delete(&url)
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT));
+
+        if let Some(headers) = headers {
+            for (key, value) in &headers {
+                req = req.header(key, value);
+            }
+        }
+        if let Some(body) = body {
+            req = req.body(body);
+        }
+
+        let response = req.send().await?;
+        let status = response.status().as_u16();
+        let body = response.text().await?;
+        tracing::debug!("Received response, status: {status}");
+        tracing::trace!("raw response body: {body}");
+
+        Ok(HttpResponse { status, body })
+    }
+}

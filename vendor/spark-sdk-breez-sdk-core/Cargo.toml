@@ -1,0 +1,80 @@
+[package]
+name = "breez-sdk-spark"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+
+[features]
+browser-tests = ["passkey"]
+uniffi = ["dep:uniffi"]
+test-utils = ["spark-wallet/test-utils"]
+passkey = ["dep:nostr", "dep:nostr-sdk"]
+sqlite = ["dep:rusqlite", "dep:rusqlite_migration"]
+postgres = ["dep:spark-postgres"]
+mysql = ["dep:spark-mysql"]
+span-trace = []
+turnkey = ["dep:turnkey_enclave_encrypt"]
+turnkey-p256 = ["turnkey", "dep:p256"]
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+name = "breez_sdk_spark"
+
+[dependencies]
+async-trait = "0.1.88"
+base64 = "0.22.1"
+bip39 = "2.2.0"
+bitcoin = { version = "0.32.6", features = ["serde"] }
+bitflags = "2.10.0"
+boltz-client = { git = "https://github.com/breez/boltz-client", rev = "809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730" }
+breez-sdk-common = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", default-features = false }
+platform-utils = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa" }
+chrono = { version = "0.4.37", features = ["serde"] }
+utils = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa" }
+flashnet = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", default-features = false }
+hex = "0.4.3"
+lnurl-models = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa" }
+macros = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa" }
+nostr = { version = "0.43.1", default-features = false, features = ["std"], optional = true }
+nostr-sdk = { version = "0.43.0", default-features = false, optional = true }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+spark-mysql = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", optional = true }
+spark-postgres = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", optional = true }
+rusqlite = { version = "0.32.1", features = ["backup", "bundled"], optional = true }
+rusqlite_migration = { version = "1.3.1", optional = true }
+spark-wallet = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", default-features = false }
+thiserror = "2.0.12"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+uuid = { version = "1.17.0", features = ["v7", "v5", "v4"] }
+uniffi = { git = "https://github.com/breez/uniffi-rs", branch = "v0.29.5-breez", optional = true }
+turnkey_enclave_encrypt = { version = "0.7", optional = true }
+x509-cert = { version = "0.2", default-features = false }
+anyhow = "1.0.98"
+frost-secp256k1-tr = { git = "https://github.com/lightsparkdev/frost", rev = "9aaf1b6b9fa3c2c3c2c7c70da83061deda1a9180" }
+k256 = { version = "0.13.0", features = ["arithmetic"] }
+p256 = { version = "0.13.2", features = ["ecdsa"], optional = true }
+
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+tokio = { version = "1.45.1", default-features = false, features = ["macros", "rt-multi-thread"] }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+tokio = { version = "1.45.1", default-features = false, features = ["macros"] }
+
+[dev-dependencies]
+breez-sdk-common = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", features = ["test-utils"] }
+breez-sdk-spark = { path = ".", features = ["test-utils"] }
+
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
+testcontainers = "0.24.0"
+testcontainers-modules = { version = "0.12.1", features = ["postgres", "mysql"] }
+breez-sdk-spark = { path = ".", features = ["sqlite", "postgres", "mysql"] }
+rcgen = "0.14.5"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3.50"
+
+[build-dependencies]
+built = { version = "0.8.0", features = ["git2"] }
+uniffi = { git = "https://github.com/breez/uniffi-rs", branch = "v0.29.5-breez", features = ["build"], optional = true }

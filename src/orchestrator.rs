@@ -8,7 +8,10 @@
 use crate::challenge::{ChallengeError, normalize_payment_challenge};
 use crate::credentials::{CredentialError, build_l402_authorization};
 use crate::error::DomainError;
-use crate::payers::base::{CancellationSemantics, PaymentError, RealPayer, verify_payment_result};
+use crate::payers::base::{
+    CancellationSemantics, PaymentAttemptOutcome, PaymentError, PostSubmitCondition, RealPayer,
+    verify_payment_result,
+};
 use crate::policy::{PolicyApproval, PolicyConfig, PolicyError, bind_policy};
 
 /// Fields received from a remote payment challenge.  They are data, not a
@@ -65,30 +68,59 @@ where
         .map_err(map_policy_error)?;
 
     let payer = (factory.construct)(approval.clone()).map_err(map_payment_error)?;
-    let result = async {
-        payer.check_ready().await.map_err(map_payment_error)?;
-        let raw = payer
-            .pay(
-                approval.challenge().invoice(),
-                approval.max_fee_sats(),
-                CancellationSemantics::BeforeSubmission,
-            )
-            .await
-            .map_err(map_payment_error)?;
-        let verified = verify_payment_result(approval.challenge().invoice(), raw)
-            .map_err(map_payment_error)?;
-        build_l402_authorization(token, approval.challenge(), &verified)
-            .map_err(map_credential_error)
-    }
-    .await;
+    let mut outcome = match payer.check_ready().await {
+        Ok(()) => {
+            payer
+                .pay(
+                    approval.challenge().invoice(),
+                    approval.max_fee_sats(),
+                    CancellationSemantics::BeforeSubmission,
+                )
+                .await
+        }
+        Err(error) => PaymentAttemptOutcome::NotSubmitted(error),
+    };
 
-    // Cleanup is a security boundary: no constructed real payer may retain
-    // wallet/transport resources after an attempted submission.  Surface a
-    // cleanup error instead of silently masking retained ownership.
-    match (result, payer.disconnect().await.map_err(map_payment_error)) {
-        (Ok(authorization), Ok(())) => Ok(authorization),
-        (_, Err(error)) => Err(error),
-        (Err(error), Ok(())) => Err(error),
+    // The operation owns lifecycle. Every constructed payer receives exactly
+    // one awaited cleanup attempt, including failed readiness.
+    if let Err(error) = payer.disconnect().await {
+        match &mut outcome {
+            PaymentAttemptOutcome::Confirmed { .. } => {
+                outcome.add_post_submit_condition(PostSubmitCondition::DisconnectFailed);
+            }
+            // Cleanup failure cannot make an already-submitted ambiguous
+            // payment retryable. Preserve the stronger submission state.
+            PaymentAttemptOutcome::SubmittedUnknown(_) => {}
+            PaymentAttemptOutcome::NotSubmitted(_)
+            | PaymentAttemptOutcome::SubmittedFailedFinal(_) => {
+                return Err(map_payment_error(error));
+            }
+        }
+    }
+
+    match outcome {
+        PaymentAttemptOutcome::Confirmed {
+            raw,
+            post_submit_conditions,
+        } => {
+            // Proof validation has public precedence over every later
+            // condition and remains the sole issuer of authorization-capable
+            // payment material.
+            let verified = verify_payment_result(approval.challenge().invoice(), raw)
+                .map_err(map_payment_error)?;
+            let authorization = build_l402_authorization(token, approval.challenge(), &verified)
+                .map_err(map_credential_error)?;
+            if post_submit_conditions.contains(&PostSubmitCondition::DisconnectFailed) {
+                return Err(map_payment_error(PaymentError::Transport));
+            }
+            if post_submit_conditions.contains(&PostSubmitCondition::FinalFeeExceeded) {
+                return Err(map_payment_error(PaymentError::FeeExceeded));
+            }
+            Ok(authorization)
+        }
+        PaymentAttemptOutcome::SubmittedUnknown(_) => Err(DomainError::SubmissionUnknown),
+        PaymentAttemptOutcome::NotSubmitted(error)
+        | PaymentAttemptOutcome::SubmittedFailedFinal(error) => Err(map_payment_error(error)),
     }
 }
 

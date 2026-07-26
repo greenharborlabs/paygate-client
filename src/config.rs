@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_saphyr::granit_parser::{Event, Parser, ScalarStyle, Scanner, StrInput, TokenType};
 use serde_saphyr::{DuplicateKeyPolicy, MergeKeyPolicy};
@@ -24,7 +25,7 @@ pub enum ConfigError {
     Input(#[from] ConfigInputError),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct EnvRef(pub String);
 impl EnvRef {
     pub fn resolve(&self, env: &HashMap<String, String>) -> Result<String, ConfigError> {
@@ -34,11 +35,33 @@ impl EnvRef {
             .ok_or_else(|| ConfigError::MissingSecret(self.0.clone()))
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PayerConfig {
     pub backend: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum BreezNetwork {
+    Mainnet,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct BreezConfig {
+    pub api_key_env: EnvRef,
+    pub mnemonic_env: EnvRef,
+    pub network: BreezNetwork,
+    pub storage_dir: PathBuf,
+    pub completion_timeout_secs: u32,
+    /// Original config location used to reload the supported merged secret
+    /// source at wallet construction. It is non-secret runtime context and is
+    /// deliberately omitted from serialized configuration output.
+    #[serde(skip)]
+    secret_source_config: PathBuf,
+}
+impl BreezConfig {
+    pub fn secret_source_config(&self) -> &Path {
+        &self.secret_source_config
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PolicyConfig {
     pub max_request_sats: u64,
     pub max_fee_sats: u64,
@@ -46,14 +69,15 @@ pub struct PolicyConfig {
     pub allowed_hosts: Vec<String>,
     pub allowed_services: Vec<String>,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ProtocolConfig {
     pub preferred: String,
     pub allow_l402: bool,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct PaygateConfig {
     pub payer: PayerConfig,
+    pub breez: Option<BreezConfig>,
     pub policy: PolicyConfig,
     pub protocol: ProtocolConfig,
 }
@@ -79,6 +103,13 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<PaygateConfig, ConfigError>
     let expanded = expand_path(path);
     let path = expanded.as_path();
     let bytes = fs::read(path).map_err(|_| ConfigError::Missing)?;
+    let secret_source_config = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|_| ConfigError::Invalid)?
+            .join(path)
+    };
     let raw: serde_json::Value = from_safe_yaml(&bytes)?;
     let root = raw.as_object().ok_or(ConfigError::Invalid)?;
     let payer = root
@@ -94,7 +125,35 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<PaygateConfig, ConfigError>
     }
     // Resolve references for the selected backend only.  Values never enter
     // the returned configuration, keeping Debug/display and CLI errors safe.
-    validate_selected_backend(root, &backend, &load_config_env(path))?;
+    let config_env = load_config_env(path);
+    validate_selected_backend(root, &backend, &config_env)?;
+    let breez = if backend == "breez" {
+        let values = root
+            .get("breez")
+            .and_then(serde_json::Value::as_object)
+            .ok_or(ConfigError::Invalid)?;
+        let api_key_env = EnvRef(string(values, "api_key_env")?);
+        let mnemonic_env = EnvRef(string(values, "mnemonic_env")?);
+        let network = match string(values, "network")?.as_str() {
+            "mainnet" => BreezNetwork::Mainnet,
+            _ => return Err(ConfigError::Invalid),
+        };
+        let storage_dir = expand_path(string(values, "storage_dir")?);
+        let completion_timeout_secs = number(values, "completion_timeout_secs")?;
+        if !(1..=3_600).contains(&completion_timeout_secs) {
+            return Err(ConfigError::Invalid);
+        }
+        Some(BreezConfig {
+            api_key_env,
+            mnemonic_env,
+            network,
+            storage_dir,
+            completion_timeout_secs: completion_timeout_secs as u32,
+            secret_source_config,
+        })
+    } else {
+        None
+    };
     let policy = root
         .get("policy")
         .and_then(serde_json::Value::as_object)
@@ -139,6 +198,7 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<PaygateConfig, ConfigError>
     };
     Ok(PaygateConfig {
         payer: PayerConfig { backend },
+        breez,
         policy: PolicyConfig {
             max_request_sats,
             max_fee_sats,

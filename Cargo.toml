@@ -23,7 +23,7 @@ required-features = ["payment-canary-qualification"]
 
 [features]
 default = []
-breez-qualification = ["dep:breez-sdk-spark"]
+breez-qualification = []
 payment-canary-qualification = []
 
 [dependencies]
@@ -42,7 +42,14 @@ serde-saphyr = { version = "=0.0.29", default-features = false, features = ["des
 sha2 = "=0.10.9"
 thiserror = "=2.0.12"
 tokio = { version = "=1.45.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
-breez-sdk-spark = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", package = "breez-sdk-spark", default-features = false, features = ["sqlite"], optional = true }
+breez-sdk-spark = { git = "https://github.com/breez/spark-sdk.git", rev = "f660f5a3bf24323e5c14235efcd28e5aef06c8aa", package = "breez-sdk-spark", default-features = false, features = ["sqlite"] }
+
+[patch."https://github.com/breez/spark-sdk.git"]
+breez-sdk-spark = { path = "vendor/spark-sdk-breez-sdk-core" }
+platform-utils = { path = "vendor/spark-sdk-platform-utils" }
+
+[patch."https://github.com/breez/boltz-client"]
+platform-utils = { path = "vendor/boltz-client-platform-utils" }
 
 [dev-dependencies]
 async-trait = "=0.1.88"
