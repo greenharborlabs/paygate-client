@@ -115,6 +115,42 @@ impl FileCredentialCache {
             .into_iter()
             .find(|c| c.scope == target && c.usable(now)))
     }
+    /// Fail-closed request-path lookup. Only a usable matching entry causes a
+    /// secret read; unreadable unrelated or unusable metadata is ignored.
+    pub fn get_scoped_fail_closed(
+        &self,
+        scope: &CredentialScope,
+        now: i64,
+    ) -> Result<Option<CachedCredential>, CacheError> {
+        let target = scoped(scope, &self.namespace);
+        self.with_lock(|| {
+            let Some(mut credential) = self.load_raw()?.into_iter().find(|candidate| {
+                candidate.usable(now)
+                    && candidate.scope.request_key == target.request_key
+                    && candidate.scope.namespace == target.namespace
+                    && candidate.scope.origin_host == target.origin_host
+                    && candidate.scope.protocol == target.protocol
+                    && candidate.scope.payer_backend == target.payer_backend
+                    && candidate.scope.policy_hash == target.policy_hash
+                    && (target.service.is_none() || candidate.scope.service == target.service)
+            }) else {
+                return Ok(None);
+            };
+            if !credential.authorization.is_empty() {
+                return Ok(Some(credential));
+            }
+            if credential.secret_storage.as_deref() != Some("keyring") {
+                return Err(CacheError::Corrupt);
+            }
+            credential.authorization = self
+                .secret_store()
+                .get(&credential.scope.namespace, &credential.credential_id)
+                .map_err(|_| CacheError::Io)?
+                .filter(|secret| !secret.is_empty())
+                .ok_or(CacheError::Io)?;
+            Ok(Some(credential))
+        })
+    }
     pub fn put(&self, mut credential: CachedCredential) -> Result<(), CacheError> {
         credential.scope.namespace = self.namespace.clone();
         self.with_lock(|| {
@@ -132,6 +168,57 @@ impl FileCredentialCache {
                 .delete(&self.namespace, id)
                 .map_err(|_| CacheError::Io)?;
             self.save(&all)
+        })
+    }
+    /// Delete matching schema-v1 entries from both metadata and secret storage.
+    ///
+    /// Selection deliberately operates on raw metadata, so expired, rejected,
+    /// exhausted, and temporarily-unreadable credentials remain purgeable.
+    /// Secret deletion happens before the metadata commit. If any secret-store
+    /// operation fails, metadata is retained and the operation fails closed.
+    pub fn purge(
+        &self,
+        host: Option<&str>,
+        service: Option<&str>,
+        all_credentials: bool,
+    ) -> Result<usize, CacheError> {
+        self.with_lock(|| {
+            let mut entries = self.load_raw()?;
+            let matched: Vec<(String, String)> = entries
+                .iter()
+                .filter(|credential| {
+                    all_credentials
+                        || ((host.is_some() || service.is_some())
+                            && host.is_none_or(|value| {
+                                credential.scope.origin_host.as_deref() == Some(value)
+                            })
+                            && service.is_none_or(|value| {
+                                credential.scope.service.as_deref() == Some(value)
+                            }))
+                })
+                .map(|credential| {
+                    (
+                        credential.scope.namespace.clone(),
+                        credential.credential_id.clone(),
+                    )
+                })
+                .collect();
+            let store = self.secret_store();
+            for (namespace, credential_id) in &matched {
+                store
+                    .delete(namespace, credential_id)
+                    .map_err(|_| CacheError::Io)?;
+            }
+            if matched.is_empty() {
+                return Ok(0);
+            }
+            entries.retain(|credential| {
+                !matched.iter().any(|(namespace, id)| {
+                    credential.scope.namespace == *namespace && credential.credential_id == *id
+                })
+            });
+            self.save_metadata(&entries, false)?;
+            Ok(matched.len())
         })
     }
     pub fn mark_success(&self, id: &str, now: i64) -> Result<(), CacheError> {
@@ -154,6 +241,24 @@ impl FileCredentialCache {
         })
     }
     fn load(&self) -> Result<Vec<CachedCredential>, CacheError> {
+        let file_credentials = self.load_raw()?;
+        let store = self.secret_store();
+        Ok(file_credentials
+            .into_iter()
+            .filter_map(|mut credential| {
+                if credential.authorization.is_empty()
+                    && credential.secret_storage.as_deref() == Some("keyring")
+                {
+                    credential.authorization = store
+                        .get(&credential.scope.namespace, &credential.credential_id)
+                        .ok()
+                        .flatten()?;
+                }
+                (!credential.authorization.is_empty()).then_some(credential)
+            })
+            .collect())
+    }
+    fn load_raw(&self) -> Result<Vec<CachedCredential>, CacheError> {
         // Open and validate the same descriptor that is read.  Checking a
         // path and reopening it would let an attacker replace it in between.
         let Some(mut state) = open_safe_read(&self.path)? else {
@@ -173,25 +278,7 @@ impl FileCredentialCache {
                 return Err(CacheError::Corrupt);
             }
         }
-        // Python schema-v1 keyring entries intentionally contain a null
-        // authorization.  They are valid metadata, but never usable until a
-        // secret is recovered through the classified fallback coordinator.
-        let store = self.secret_store();
-        Ok(file
-            .credentials
-            .into_iter()
-            .filter_map(|mut credential| {
-                if credential.authorization.is_empty()
-                    && credential.secret_storage.as_deref() == Some("keyring")
-                {
-                    credential.authorization = store
-                        .get(&credential.scope.namespace, &credential.credential_id)
-                        .ok()
-                        .flatten()?;
-                }
-                (!credential.authorization.is_empty()).then_some(credential)
-            })
-            .collect())
+        Ok(file.credentials)
     }
     fn save(&self, values: &[CachedCredential]) -> Result<(), CacheError> {
         let store = self.secret_store();
@@ -200,6 +287,13 @@ impl FileCredentialCache {
                 .put(&secret_record(credential))
                 .map_err(|_| CacheError::Io)?;
         }
+        self.save_metadata(values, true)
+    }
+    fn save_metadata(
+        &self,
+        values: &[CachedCredential],
+        force_keyring: bool,
+    ) -> Result<(), CacheError> {
         let mut value = serde_json::to_value(&CacheFile {
             version: 1,
             credentials: values.to_vec(),
@@ -212,9 +306,15 @@ impl FileCredentialCache {
             .get_mut("credentials")
             .and_then(serde_json::Value::as_array_mut)
         {
-            for entry in entries {
-                entry["authorization"] = serde_json::Value::Null;
-                entry["secretStorage"] = serde_json::Value::String("keyring".into());
+            for (entry, credential) in entries.iter_mut().zip(values) {
+                // A normal put has already copied every secret to the store and
+                // therefore forces metadata-only keyring records. Purge writes
+                // raw survivors: preserve legacy inline authorization while
+                // keeping existing keyring records metadata-only.
+                if force_keyring || credential.secret_storage.as_deref() == Some("keyring") {
+                    entry["authorization"] = serde_json::Value::Null;
+                    entry["secretStorage"] = serde_json::Value::String("keyring".into());
+                }
             }
         }
         let bytes =

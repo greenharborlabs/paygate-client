@@ -1,0 +1,36 @@
+{
+  "plan_path": "plans/minimal-rust-cutover.md",
+  "plan_hash": "3c10cf9b411d4448ce9ec43239bfcacf5ccf83d52992e7f68981323acfea89c5",
+  "start_commit": "72f2039a7dd804691176fcdca4b75b283d455a62",
+  "tasks": {
+    "W1-01": "completed",
+    "W2-01": "completed",
+    "W2-02": "completed"
+  },
+  "blocked_reasons": {
+    "final-verification-gate": "Aggregate targeted tests passed (29 tests), but `cargo check --lib` could not run because the Breez/Spark build scripts could not find `protoc`."
+  },
+  "gates": {
+    "final_verification": "pending",
+    "specialist_review": "pending"
+  },
+  "touched_tests": [
+    "tests/backend_commands.rs",
+    "tests/credential_purge.rs",
+    "tests/request_flow.rs",
+    "tests/http_boundary.rs",
+    "tests/oracle_semantic_bridge.rs"
+  ],
+  "contract_registry": [
+    {"file": "src/diagnostics.rs", "name": "doctor_with_payer", "signature": "async fn doctor_with_payer<P: RealPayer>(...) -> CommandResult"},
+    {"file": "src/commands/backend.rs", "name": "pay_invoice_with_payer", "signature": "async fn pay_invoice_with_payer<P: RealPayer>(...) -> CommandResult"},
+    {"file": "src/state/cache.rs", "name": "FileCredentialCache::purge", "signature": "fn purge(&self, host: Option<&str>, service: Option<&str>, all: bool) -> Result<usize, CacheError>"},
+    {"file": "src/orchestrator.rs", "name": "RealPayerFactory::supports_fee_limit", "signature": "pub const fn supports_fee_limit(&self) -> bool"}
+  ],
+  "agent_suite": {
+    "coder": "greenharbor-backend-coder-rust",
+    "reviewer": "greenharbor-backend-reviewer-rust",
+    "architect": "greenharbor-backend-planning-architect-rust"
+  },
+  "test_cmd": "cargo test --test <affected-test>"
+}

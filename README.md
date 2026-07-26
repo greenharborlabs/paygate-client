@@ -678,7 +678,23 @@ metadata was insufficient to enforce policy before payment.
 
 ## Development
 
+Native Rust builds require Rust 1.88.0 (selected by `rust-toolchain.toml`) and
+the Protocol Buffer compiler used by the Breez/Spark build scripts. For example,
+install `protoc` with `brew install protobuf` on macOS or
+`sudo apt-get install protobuf-compiler` on Ubuntu/Debian, then run:
+
 ```bash
+protoc --version
+cargo fetch --locked
+cargo check --locked --lib
+cargo test --locked
+```
+
+The Python compatibility oracle and legacy client checks use the editable
+development install:
+
+```bash
+python3 -m pip install -e ".[dev]"
 python3 -m pytest tests/test_config.py
 paygate --help
 paygate request --help

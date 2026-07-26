@@ -117,7 +117,11 @@ pub async fn run_cli(cli: Cli) -> i32 {
     match result {
         Ok(value) => {
             println!("{value}");
-            0
+            if value.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+                1
+            } else {
+                0
+            }
         }
         Err((code, message)) => {
             // All messages are fixed classifications; never echo command args,

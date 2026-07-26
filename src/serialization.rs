@@ -21,3 +21,68 @@ pub fn parse_object(bytes: &[u8]) -> Result<serde_json::Map<String, Value>, serd
         ))),
     }
 }
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub fn base64_standard(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let a = chunk[0];
+        let b = chunk.get(1).copied().unwrap_or(0);
+        let c = chunk.get(2).copied().unwrap_or(0);
+        out.push(BASE64[(a >> 2) as usize] as char);
+        out.push(BASE64[(((a & 3) << 4) | (b >> 4)) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            BASE64[(((b & 15) << 2) | (c >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            BASE64[(c & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+pub fn base64_url_nopad(bytes: &[u8]) -> String {
+    base64_standard(bytes)
+        .trim_end_matches('=')
+        .replace('+', "-")
+        .replace('/', "_")
+}
+
+pub fn decode_base64_url_nopad(value: &str) -> Option<Vec<u8>> {
+    if value.contains('=') {
+        return None;
+    }
+    let mut normalized = value.replace('-', "+").replace('_', "/");
+    while normalized.len() % 4 != 0 {
+        normalized.push('=');
+    }
+    let mut out = Vec::with_capacity(normalized.len() / 4 * 3);
+    for block in normalized.as_bytes().chunks(4) {
+        if block.len() != 4 {
+            return None;
+        }
+        let v = |c: u8| -> Option<u8> {
+            BASE64
+                .iter()
+                .position(|candidate| *candidate == c)
+                .map(|i| i as u8)
+        };
+        let a = v(block[0])?;
+        let b = v(block[1])?;
+        let c = if block[2] == b'=' { 0 } else { v(block[2])? };
+        let d = if block[3] == b'=' { 0 } else { v(block[3])? };
+        out.push((a << 2) | (b >> 4));
+        if block[2] != b'=' {
+            out.push((b << 4) | (c >> 2));
+        }
+        if block[3] != b'=' {
+            out.push((c << 6) | d);
+        }
+    }
+    Some(out)
+}

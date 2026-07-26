@@ -27,24 +27,33 @@ pub async fn run(command: CredentialsCommand) -> CommandResult {
     let path = path.as_ref().map(expand_path).unwrap_or_else(|| {
         FileCredentialCache::default_path(Some(&namespace)).expect("validated namespace")
     });
-    let credentials = FileCredentialCache::new(path, Some(&namespace))
-        .map_err(|_| ("state_unavailable", "credential state is unavailable"))?
-        .list()
+    let cache = FileCredentialCache::new(path, Some(&namespace))
         .map_err(|_| ("state_unavailable", "credential state is unavailable"))?;
     match command {
-        CredentialsCommand::List { .. } => Ok(
-            json!({"ok": true, "credentials": credentials.into_iter().map(redacted_credential).collect::<Vec<_>>() }),
-        ),
-        CredentialsCommand::Show { credential_id, .. } => credentials
+        CredentialsCommand::List { .. } => {
+            let credentials = cache
+                .list()
+                .map_err(|_| ("state_unavailable", "credential state is unavailable"))?;
+            Ok(
+                json!({"ok": true, "credentials": credentials.into_iter().map(redacted_credential).collect::<Vec<_>>() }),
+            )
+        }
+        CredentialsCommand::Show { credential_id, .. } => cache
+            .list()
+            .map_err(|_| ("state_unavailable", "credential state is unavailable"))?
             .into_iter()
             .find(|c| c.credential_id == credential_id)
             .map(redacted_credential)
             .map(|credential| json!({"ok": true, "credential": credential}))
             .ok_or(("credential_not_found", "credential was not found")),
-        CredentialsCommand::Purge { .. } => Err((
-            "execution_unavailable",
-            "credential deletion requires the payment runtime",
-        )),
+        CredentialsCommand::Purge {
+            host, service, all, ..
+        } => {
+            let deleted = cache
+                .purge(host.as_deref(), service.as_deref(), all)
+                .map_err(|_| ("state_unavailable", "credential state is unavailable"))?;
+            Ok(json!({"ok": true, "deleted": deleted}))
+        }
     }
 }
 
