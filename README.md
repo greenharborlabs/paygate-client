@@ -1,10 +1,19 @@
 # paygate-client
 
-`paygate-client` is a Python CLI for calling HTTP services that require a
+`paygate-client` is a CLI for calling HTTP services that require a
 Paygate `402 Payment Required` challenge. It can parse Paygate MPP `Payment`
 challenges, optionally parse L402 challenges, enforce local spend policy, pay a
 BOLT11 invoice through a configured payer backend, and retry the request with a
 payment credential.
+
+The repository now contains the controlled tooling for the minimal Rust
+deployment cutover. Operators must start with the immutable Wave 1 preflight
+record and follow the fixture/oracle, Rust-product-test, doctor, separately
+approved invoice and protected-request, install, restart/cache, rollback, and
+finalization gates in the
+[minimal Rust cutover runbook](docs/minimal-rust-cutover-runbook.md). The
+cutover scripts never treat a passing test as payment approval and never run a
+payment during rollback.
 
 ## Install
 
