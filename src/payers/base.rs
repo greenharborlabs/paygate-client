@@ -408,7 +408,6 @@ mod tests {
             fee_sats: 0,
             payment_hash: Some(hex::encode(invoice.payment_hash())),
             preimage_hex: Some("00".repeat(32)),
-            outcome: SubmissionOutcome::Succeeded,
         };
 
         assert_eq!(

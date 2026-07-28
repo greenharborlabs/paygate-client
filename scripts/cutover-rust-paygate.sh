@@ -83,7 +83,7 @@ fi
 if [[ "$mode" == _process-check ]]; then
   python3 - <<'PY'
 import ast,ctypes,errno,os,re,resource,shlex,struct,subprocess,sys,tempfile
-old_paths={os.environ[k] for k in ('PAYGATE_OLD_ENTRY','PAYGATE_QUARANTINE_ENTRY') if os.environ.get(k)}; wrapper=os.environ.get('PAYGATE_RECORDED_WRAPPER','')
+old_paths={os.environ[k] for k in ('PAYGATE_OLD_ENTRY','PAYGATE_QUARANTINE_ENTRY') if os.environ.get(k)}; wrapper=os.environ.get('PAYGATE_RECORDED_WRAPPER',''); rust_target=os.environ.get('PAYGATE_RUST_TARGET','')
 ignored={int(x) for x in os.environ.get('PAYGATE_IGNORE_PIDS','').split(',') if x.isdigit()}|{os.getpid(),os.getppid()}
 def limit(): resource.setrlimit(resource.RLIMIT_FSIZE,(1048576,1048576))
 try:
@@ -97,7 +97,7 @@ python_name=re.compile(r'python(?:[0-9]+(?:\.[0-9]+)?)?$',re.I); module_name=re.
 def exact_argv(pid,approx):
  def bounded_row_relevant():
   command=' '.join(approx)
-  return any(token in old_paths for token in approx) or bool(re.search(r'(?:^|\s)-m\s+paygate(?:\.[A-Za-z0-9_.-]+)?(?:\s|$)|\b(?:import|from)\s+paygate\b|__import__\s*\(\s*["\x27]paygate|import_module\s*\(\s*["\x27]paygate',command,re.I))
+  return any(token in old_paths or (rust_target and token==rust_target) for token in approx) or bool(re.search(r'(?:^|\s)-m\s+paygate(?:\.[A-Za-z0-9_.-]+)?(?:\s|$)|\b(?:import|from)\s+paygate\b|__import__\s*\(\s*["\x27]paygate|import_module\s*\(\s*["\x27]paygate',command,re.I))
  try:
   if sys.platform=='darwin':
    libc=ctypes.CDLL(None,use_errno=True); mib=(ctypes.c_int*3)(1,49,pid); size=ctypes.c_size_t()
@@ -140,7 +140,7 @@ def imports_paygate(code):
    if isinstance(n.func,ast.Attribute) and n.func.attr=='import_module' and isinstance(n.func.value,ast.Name) and n.func.value.id=='importlib': return True
  return False
 def relevant(command,argv=None):
- if argv and any(token in old_paths for token in argv): return True
+ if argv and any(token in old_paths or (rust_target and token==rust_target) for token in argv): return True
  if re.search(r'(?:^|\s)-m\s+paygate(?:\.[A-Za-z0-9_.-]+)?(?:\s|$)',command): return True
  return False
 for row in rows:
@@ -158,10 +158,11 @@ for row in rows:
  except ValueError:
   if 'paygate' in command.lower(): raise SystemExit('process scan unverifiable: malformed paygate argv')
   continue
+ if rust_target and argv and os.path.realpath(argv[0])==os.path.realpath(rust_target): raise SystemExit(f'Rust paygate executable active: {pid}')
  # Conservative evidence pass applies to every non-helper process, regardless
  # of interpreter basename or selector position. Exact protected paths are
  # intentionally rejected even when they appear only as argument data.
- protected=[path for path in old_paths if path]
+ protected=[path for path in old_paths if path]+([rust_target] if rust_target else [])
  if any(path in command or any(path in token for token in argv) for path in protected): raise SystemExit(f'protected paygate path active: {pid}')
  if re.search(r'(?:^|\s)-m\s+paygate(?:\.[A-Za-z0-9_.-]+)?(?:\s|$)|\b(?:import|from)\s+paygate(?:\b|\.)|__import__\s*\(\s*["\x27]paygate(?:\.|["\x27])|(?:importlib\s*\.\s*)?import_module\s*\(\s*["\x27]paygate(?:\.|["\x27])',command,re.I): raise SystemExit(f'paygate execution evidence active: {pid}')
  if any(re.search(r'\b(?:exec|open)\s*\(\s*["\x27]'+re.escape(path)+r'["\x27]',command) for path in protected): raise SystemExit(f'protected paygate path execution active: {pid}')
@@ -248,8 +249,8 @@ try:
  detail=subprocess.run(['launchctl','print',f'gui/{os.getuid()}/{label}'],text=True,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,check=True,timeout=3).stdout if matches else ''
 except (OSError,subprocess.SubprocessError): raise SystemExit('supervisor unverifiable')
 if len(matches)>1 or (matches and matches[0].split()[-1]!=label): raise SystemExit('supervisor label drift')
-if phase=='preinstall':
- if len(matches)!=1 or not matches[0].lstrip().startswith('-'): raise SystemExit('recorded supervisor must remain listed and stopped before install')
+if phase in ('preinstall','rollback'):
+ if len(matches)!=1 or not matches[0].lstrip().startswith('-'): raise SystemExit('recorded supervisor must remain listed and stopped before mutation')
  if wrapper not in detail and rust not in detail: raise SystemExit('supervisor configuration is not reconcilable')
  raise SystemExit(0)
 if len(matches)!=1 or (wrapper not in detail and rust not in detail) or any(path in detail for path in old_paths) or 'pid =' not in detail: raise SystemExit('supervisor is not exact Rust service')
@@ -515,12 +516,18 @@ for key in ('config','wallet_storage','credential_cache','ledger'):
  dest=out/'state'/key; dest.parent.mkdir(parents=True,exist_ok=True)
  if p.is_dir(): shutil.copytree(p,dest,symlinks=True)
  else: shutil.copy2(p,dest,follow_symlinks=False)
- items.append({'key':key,'path':str(p),'path_type':'directory' if p.is_dir() else 'file','parent_canonical':str(p.parent.resolve(strict=True)),'backup':str(pathlib.Path('state')/key),'sha256':digest(dest)})
+ ps=p.parent.stat(); ds=dest.stat()
+ items.append({'key':key,'path':str(p),'path_type':'directory' if p.is_dir() else 'file','parent_canonical':str(p.parent.resolve(strict=True)),'parent_dev':ps.st_dev,'parent_ino':ps.st_ino,'backup':str(pathlib.Path('state')/key),'backup_dev':ds.st_dev,'backup_ino':ds.st_ino,'sha256':digest(dest)})
 identity={k:candidate_manifest[k] for k in ('source_commit','cargo_lock_sha256','binary_sha256','rust_target')}
 receipt=acceptance.parent/(acceptance.name+'.cutover-'+cutover_session+'.receipt.json')
 install_session=secrets.token_hex(16); quarantine=dist.parent/('.'+dist.name+'.paygate-disabled-'+install_session)
 if quarantine.exists() or quarantine.is_symlink() or quarantine.parent.resolve()!=dist.parent.resolve(): raise SystemExit('cutover: unsafe quarantine path')
-manifest={'schema':'paygate-rust-rollback-v3','cutover_session_id':cutover_session,'install_session_id':install_session,'installed_at_epoch':int(time.time()),'candidate_identity':identity,'launcher':str(launcher),'supervisor':dep.get('supervisor'),'python_launcher_target':os.readlink(launcher),'installed_rust_launcher_target':str(candidate_binary.resolve()),'python_environment_original':str(dist),'python_environment_quarantine':str(quarantine),'python_environment_identity':{'dev':dist_stat.st_dev,'ino':dist_stat.st_ino,'uid':dist_stat.st_uid,'mode':stat.S_IMODE(dist_stat.st_mode)},'python_paygate_relative':old_relative,'python_paygate_identity':{'dev':launcher_stat.st_dev,'ino':launcher_stat.st_ino,'uid':launcher_stat.st_uid,'mode':stat.S_IMODE(launcher_stat.st_mode),'size':launcher_stat.st_size,'sha256':hashlib.sha256(resolved.read_bytes()).hexdigest()},'repository':str(repo.resolve()),'acceptance_record':str(acceptance.resolve()),'rollback_directory':str(rollback.resolve(strict=False)),'transaction_receipt':str(receipt),'state':items}
+runtime_lock=str(launcher.parent/'.paygate-runtime.lock'); runtime_marker=str(launcher.parent/'.paygate-runtime.lock.transaction.json')
+try: runtime_fd=os.open(runtime_lock,os.O_RDWR|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_CLOEXEC',0))
+except OSError: raise SystemExit('cutover: candidate deployment lock binding mismatch')
+runtime_fs=os.fstat(runtime_fd); runtime_ls=pathlib.Path(runtime_lock).lstat(); os.close(runtime_fd)
+if candidate_manifest.get('runtime_lock')!=runtime_lock or candidate_manifest.get('runtime_transaction_marker')!=runtime_marker or candidate_manifest.get('runtime_lock_uid')!=owner_uid or candidate_manifest.get('runtime_lock_dev')!=runtime_fs.st_dev or candidate_manifest.get('runtime_lock_ino')!=runtime_fs.st_ino or not stat.S_ISREG(runtime_fs.st_mode) or (runtime_ls.st_dev,runtime_ls.st_ino)!=(runtime_fs.st_dev,runtime_fs.st_ino) or runtime_fs.st_uid!=owner_uid or runtime_fs.st_nlink!=1 or stat.S_IMODE(runtime_fs.st_mode)!=0o600: raise SystemExit('cutover: candidate deployment lock binding mismatch')
+manifest={'schema':'paygate-rust-rollback-v3','cutover_session_id':cutover_session,'install_session_id':install_session,'installed_at_epoch':int(time.time()),'candidate_identity':identity,'launcher':str(launcher),'launcher_symlink_target':dep.get('launcher_symlink_target'),'resolved_launcher':dep.get('resolved_launcher'),'resolved_launcher_sha256':dep.get('resolved_launcher_sha256'),'process_uid':owner_uid,'runtime_lock':runtime_lock,'runtime_lock_dev':runtime_fs.st_dev,'runtime_lock_ino':runtime_fs.st_ino,'runtime_transaction_marker':runtime_marker,'supervisor':dep.get('supervisor'),'python_launcher_target':os.readlink(launcher),'installed_rust_launcher_target':str(candidate_binary.resolve()),'python_environment_original':str(dist),'python_environment_quarantine':str(quarantine),'python_environment_identity':{'dev':dist_stat.st_dev,'ino':dist_stat.st_ino,'uid':dist_stat.st_uid,'mode':stat.S_IMODE(dist_stat.st_mode)},'python_paygate_relative':old_relative,'python_paygate_identity':{'dev':launcher_stat.st_dev,'ino':launcher_stat.st_ino,'uid':launcher_stat.st_uid,'mode':stat.S_IMODE(launcher_stat.st_mode),'size':launcher_stat.st_size,'sha256':hashlib.sha256(resolved.read_bytes()).hexdigest()},'repository':str(repo.resolve()),'acceptance_record':str(acceptance.resolve()),'rollback_directory':str(rollback.resolve(strict=False)),'transaction_receipt':str(receipt),'state':items}
 (out/'manifest.json').write_text(json.dumps(manifest,sort_keys=True,indent=2)+'\n'); os.chmod(out/'manifest.json',0o400)
 PY
   mv "$stage" "$rollback"; stage=""
@@ -530,9 +537,20 @@ p=pathlib.Path(sys.argv[1]); fd=os.open(p.parent,os.O_RDONLY); os.fsync(fd); os.
 if os.environ.get('PAYGATE_CUTOVER_TEST_HOOK')=='after-rollback': raise SystemExit('cutover: test hook after rollback publication')
 PY
   python3 - "$acceptance" "$rollback/manifest.json" "$launcher" "$acceptance_sha" "$acceptance_dev" "$acceptance_ino" "$0" <<'PY'
-import fcntl,hashlib,json,os,pathlib,re,shlex,stat,subprocess,sys,tempfile
+import fcntl,hashlib,json,os,pathlib,re,shlex,stat,subprocess,sys,tempfile,time
 p=pathlib.Path(sys.argv[1]); manifest_path=pathlib.Path(sys.argv[2]); launcher=pathlib.Path(sys.argv[3]); expected_sha=sys.argv[4]; expected_dev=int(sys.argv[5]); expected_ino=int(sys.argv[6]); script=pathlib.Path(sys.argv[7]); r=json.load(open(manifest_path)); hook=os.environ.get('PAYGATE_CUTOVER_TEST_HOOK','')
 lock_path=p.parent/(p.name+'.lock'); lock_fd=os.open(lock_path,os.O_CREAT|os.O_RDWR,0o600); fcntl.flock(lock_fd,fcntl.LOCK_EX)
+runtime_path=pathlib.Path(r['runtime_lock'])
+try: runtime_fd=os.open(runtime_path,os.O_RDWR|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_CLOEXEC',0))
+except OSError: raise SystemExit('cutover: deployment runtime lock is unavailable')
+runtime_fs=os.fstat(runtime_fd); runtime_ls=runtime_path.lstat()
+if not stat.S_ISREG(runtime_fs.st_mode) or (runtime_ls.st_dev,runtime_ls.st_ino)!=(runtime_fs.st_dev,runtime_fs.st_ino) or (runtime_fs.st_dev,runtime_fs.st_ino)!=(r['runtime_lock_dev'],r['runtime_lock_ino']) or runtime_fs.st_uid!=r['process_uid'] or runtime_fs.st_nlink!=1 or stat.S_IMODE(runtime_fs.st_mode)!=0o600: raise SystemExit('cutover: deployment runtime lock identity mismatch')
+try: fcntl.flock(runtime_fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+except BlockingIOError: raise SystemExit('cutover: Rust paygate is active')
+runtime_ls=runtime_path.lstat()
+if (runtime_ls.st_dev,runtime_ls.st_ino)!=(runtime_fs.st_dev,runtime_fs.st_ino): raise SystemExit('cutover: deployment runtime lock changed while installing')
+runtime_marker=pathlib.Path(r['runtime_transaction_marker'])
+if runtime_marker.exists() or runtime_marker.is_symlink(): raise SystemExit('cutover: deployment recovery is required')
 def sync_dir(path): fd=os.open(path,os.O_RDONLY); os.fsync(fd); os.close(fd)
 def ident(v): return isinstance(v,str) and 0<len(v)<=128 and re.fullmatch(r'[A-Za-z0-9._:-]+',v) is not None
 if hook=='replace-acceptance':
@@ -559,6 +577,11 @@ for entry in entries:
  elif entry.get('result')!='PASS': raise SystemExit('cutover: malformed PASS at publication')
 scan_env=os.environ.copy(); original_env=pathlib.Path(r['python_environment_original']); quarantine=pathlib.Path(r['python_environment_quarantine']); scan_env.update(PAYGATE_OLD_ENTRY=str(original_env/r['python_paygate_relative']),PAYGATE_QUARANTINE_ENTRY=str(quarantine/r['python_paygate_relative']),PAYGATE_RECORDED_WRAPPER=str(launcher),PAYGATE_IGNORE_PIDS=f'{os.getpid()},{os.getppid()}',PAYGATE_RECORDED_SUPERVISOR=r['supervisor'],PAYGATE_RUST_TARGET=r['installed_rust_launcher_target'],PAYGATE_RUNTIME_PHASE='preinstall')
 subprocess.run([str(script),'_supervisor-check'],env=scan_env,check=True,timeout=8,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL)
+if hook=='pause-after-final-scan':
+ ready=pathlib.Path(os.environ['PAYGATE_CUTOVER_TEST_INSTALL_READY']); release=pathlib.Path(os.environ['PAYGATE_CUTOVER_TEST_INSTALL_RELEASE']); ready.write_text('ready\n'); sync_dir(ready.parent); deadline=time.monotonic()+8
+ while not release.exists():
+  if time.monotonic()>=deadline: raise SystemExit('cutover: timed out waiting for install race test release')
+  time.sleep(0.01)
 manifest_hash=hashlib.sha256(manifest_path.read_bytes()).hexdigest(); receipt=pathlib.Path(r['transaction_receipt'])
 receipt_data={'schema':'paygate-rust-cutover-receipt-v1','candidate_identity':identity,'acceptance_record':str(p.resolve()),'cutover_session_id':r['cutover_session_id'],'install_session_id':r['install_session_id'],'installed_at_epoch':r['installed_at_epoch'],'rollback_directory':str(manifest_path.parent.resolve()),'rollback_manifest_sha256':manifest_hash,'python_launcher_target':r['python_launcher_target'],'installed_rust_launcher_target':r['installed_rust_launcher_target']}
 try: receipt_fd=os.open(receipt,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o400)
@@ -598,48 +621,10 @@ fi
 
 if [[ "$mode" == rollback ]]; then
   [[ -n "$rollback" && -f "$rollback/manifest.json" ]] || { echo "rollback: missing backup" >&2; exit 2; }
-  python3 - "$rollback" "$record" <<'PY'
-import hashlib,json,os,pathlib,shutil,stat,sys
-rb=pathlib.Path(sys.argv[1]); pre=json.load(open(sys.argv[2])); manifest_path=rb/'manifest.json'; r=json.load(open(manifest_path))
-if r.get('schema')!='paygate-rust-rollback-v3' or r.get('rollback_directory')!=str(rb.resolve()) or r.get('launcher')!=pre['deployment']['launcher']: raise SystemExit('rollback: manifest/preflight mismatch')
-receipt=pathlib.Path(r['transaction_receipt']); ls=receipt.lstat(); fd=os.open(receipt,os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)); fs=os.fstat(fd); raw=os.read(fd,16385); os.close(fd); data=json.loads(raw); manifest_hash=hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-receipt_keys={'schema','candidate_identity','acceptance_record','cutover_session_id','install_session_id','installed_at_epoch','rollback_directory','rollback_manifest_sha256','python_launcher_target','installed_rust_launcher_target'}
-if not stat.S_ISREG(fs.st_mode) or (ls.st_dev,ls.st_ino)!=(fs.st_dev,fs.st_ino) or fs.st_nlink!=1 or stat.S_IMODE(fs.st_mode)!=0o400 or set(data)!=receipt_keys or data.get('schema')!='paygate-rust-cutover-receipt-v1' or data.get('candidate_identity')!=r.get('candidate_identity') or data.get('acceptance_record')!=str(pathlib.Path(r['acceptance_record']).resolve()) or data.get('rollback_manifest_sha256')!=manifest_hash or data.get('rollback_directory')!=str(rb.resolve()) or any(data.get(k)!=r.get(k) for k in ('cutover_session_id','install_session_id','installed_at_epoch','python_launcher_target','installed_rust_launcher_target')): raise SystemExit('rollback: receipt mismatch')
-launcher=pathlib.Path(r['launcher']); original=pathlib.Path(r['python_environment_original']); quarantine=pathlib.Path(r['python_environment_quarantine']); rust=r['installed_rust_launcher_target']; python_target=r['python_launcher_target']
-if not launcher.is_symlink() or os.readlink(launcher) not in (rust,python_target): raise SystemExit('rollback: unknown launcher state')
-original_present=original.is_dir() and not original.is_symlink(); quarantine_present=quarantine.is_dir() and not quarantine.is_symlink()
-if original_present==quarantine_present: raise SystemExit('rollback: environment state is ambiguous')
-env=original if original_present else quarantine; es=env.stat(); expected=r['python_environment_identity']; old=env/r['python_paygate_relative']; olds=old.stat(); oe=r['python_paygate_identity']
-if (es.st_dev,es.st_ino,es.st_uid,stat.S_IMODE(es.st_mode))!=(expected['dev'],expected['ino'],expected['uid'],expected['mode']) or old.is_symlink() or not old.is_file() or (olds.st_dev,olds.st_ino,olds.st_uid,stat.S_IMODE(olds.st_mode),olds.st_size)!=(oe['dev'],oe['ino'],oe['uid'],oe['mode'],oe['size']) or hashlib.sha256(old.read_bytes()).hexdigest()!=oe['sha256']: raise SystemExit('rollback: quarantined environment identity mismatch')
-def restore_launcher():
- tmp=launcher.parent/('.paygate-rollback-'+str(os.getpid())); os.symlink(python_target,tmp); os.replace(tmp,launcher); parent_fd=os.open(launcher.parent,os.O_RDONLY); os.fsync(parent_fd); os.close(parent_fd)
- if not launcher.is_symlink() or os.readlink(launcher)!=python_target: raise SystemExit('rollback: launcher restore verification failed')
-# Already rolled back: verify and return without touching mutable state.
-if original_present:
- if os.readlink(launcher)==python_target: raise SystemExit(0)
- restore_launcher(); raise SystemExit(0)
-# The only state-restoring transition starts from the exact installed shape.
-if os.readlink(launcher)!=rust: raise SystemExit('rollback: partial quarantine state has non-Rust launcher')
-def digest(p):
- h=hashlib.sha256()
- if p.is_file(): h.update(p.read_bytes())
- elif p.is_dir():
-  for q in sorted(p.rglob('*')):
-   h.update(str(q.relative_to(p)).encode()+b'\0'); h.update(os.readlink(q).encode() if q.is_symlink() else q.read_bytes() if q.is_file() else b'')
- return h.hexdigest()
-for item in r['state']:
- src=rb/item['backup']; dst=pathlib.Path(item['path'])
- if digest(src)!=item['sha256'] or not dst.parent.is_dir() or str(dst.parent.resolve())!=item['parent_canonical']: raise SystemExit('rollback: state backup mismatch')
-for item in r['state']:
- src=rb/item['backup']; dst=pathlib.Path(item['path'])
- if dst.exists() or dst.is_symlink(): shutil.rmtree(dst) if dst.is_dir() and not dst.is_symlink() else dst.unlink()
- shutil.copytree(src,dst,symlinks=True) if src.is_dir() else shutil.copy2(src,dst,follow_symlinks=False)
-os.rename(quarantine,original); parent_fd=os.open(original.parent,os.O_RDONLY); os.fsync(parent_fd); os.close(parent_fd)
-old=original/r['python_paygate_relative']; olds=old.stat()
-if original.is_symlink() or not original.is_dir() or quarantine.exists() or old.is_symlink() or not old.is_file() or (olds.st_dev,olds.st_ino,olds.st_uid,stat.S_IMODE(olds.st_mode),olds.st_size)!=(oe['dev'],oe['ino'],oe['uid'],oe['mode'],oe['size']) or hashlib.sha256(old.read_bytes()).hexdigest()!=oe['sha256']: raise SystemExit('rollback: restored Python identity mismatch')
-restore_launcher()
-if not original.is_dir() or quarantine.exists() or os.readlink(launcher)!=python_target: raise SystemExit('rollback: restore verification failed')
-PY
+  if ! python3 "$(dirname "$0")/rollback-rust-paygate.py" "$rollback" "$record" "$0"; then
+    echo "rollback: failed; if the runtime recovery marker exists, retain it and rerun this rollback command" >&2
+    exit 1
+  fi
   echo "rollback: PASS (Python paygate restored; no payment invoked)"; exit 0
 fi
 

@@ -137,14 +137,17 @@ mod tests {
     #[test]
     fn redacts_payment_material_in_structured_diagnostics() {
         let proof = "ab".repeat(32);
-        for diagnostic in [
-            format!("preimage={proof}"),
-            format!("?payment_hash={proof}&status=failed"),
-            format!(r#"{{"preimage":"{proof}"}}"#),
+        for (diagnostic, expected_redaction) in [
+            (format!("preimage={proof}"), REDACTED_SECRET),
+            (
+                format!("?payment_hash={proof}&status=failed"),
+                REDACTED_PROOF,
+            ),
+            (format!(r#"{{"preimage":"{proof}"}}"#), REDACTED_SECRET),
         ] {
             let rendered = redact_text(&diagnostic, &[]);
             assert!(!rendered.contains(&proof));
-            assert!(rendered.contains(REDACTED_PROOF));
+            assert!(rendered.contains(expected_redaction));
         }
     }
 

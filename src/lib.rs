@@ -13,6 +13,7 @@ pub mod orchestrator;
 pub mod payers;
 pub mod policy;
 pub mod redaction;
+pub mod runtime_lock;
 pub mod serialization;
 pub mod state;
 pub mod trace;

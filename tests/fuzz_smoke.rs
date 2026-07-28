@@ -4,7 +4,7 @@
 //! it can be run in the locked/offline integration qualification gate.
 
 use paygate::invoice::ValidatedBolt11;
-use paygate::redaction::{REDACTED_PROOF, redact_text};
+use paygate::redaction::{REDACTED_PROOF, REDACTED_SECRET, redact_text};
 
 #[test]
 fn hostile_text_corpus_never_panics_or_leaks_hex_payment_material() {
@@ -25,7 +25,13 @@ fn hostile_text_corpus_never_panics_or_leaks_hex_payment_material() {
         let rendered = redact_text(&candidate, &[]);
         assert!(!rendered.contains(&proof));
         if candidate.contains(&proof) {
-            assert!(rendered.contains(REDACTED_PROOF));
+            let expected_redaction =
+                if candidate.contains("invoice") || candidate.contains("preimage") {
+                    REDACTED_SECRET
+                } else {
+                    REDACTED_PROOF
+                };
+            assert!(rendered.contains(expected_redaction));
         }
     }
 }

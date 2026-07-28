@@ -33,6 +33,11 @@ rollback=/secure/operator/path/paygate-python-rollback
 acceptance=/secure/operator/path/paygate-acceptance.json
 operator_id=operator-01
 
+# One-time host provisioning. Run exactly once for this preflight record.
+scripts/package-rust-paygate.sh provision-lock \
+  --repo "$repo" --record "$preflight" \
+  --confirm PROVISION_PAYGATE_RUNTIME_LOCK
+
 scripts/package-rust-paygate.sh \
   --repo "$repo" --record "$preflight" --output "$candidate"
 ```
@@ -51,6 +56,21 @@ target with `cargo build --locked --release --target … --bin paygate`. Review
 `manifest.json`, then run the repository fixture/oracle and Rust product tests
 against that same commit according to the release checklist. Re-run the W1
 wave guard before and after those tests. A dirty-baseline mismatch stops work.
+The explicit provisioning command creates or adopts the owner-only
+`.paygate-runtime.lock` beside the recorded launcher and writes the immutable
+owner-read-only binding record
+`.paygate-runtime.lock.binding.json` beside it. The binding is deployment-global,
+not derived from the preflight filename, and provisioning refuses to adopt an
+existing unbound lock or run again once the binding exists. Preserve both files
+for the lifetime of every issued candidate: do not unlink, replace, hard-link,
+chmod, or edit either one. Ordinary packaging never creates or rebinds the
+lock; it requires the sidecar, verifies its bound preflight hash and exact lock
+device/inode, and compiles that identity into the candidate and manifest. A
+different preflight pathname does not authorize reprovisioning. If either
+object is lost or changed, stop: a new record alone is not sufficient recovery,
+and this workflow provides no automated way to retire an orphaned inode. Every
+runtime and maintenance operation fails closed if the provisioned lock identity
+changes.
 Record the two redacted test facts, in order:
 
 ```bash
@@ -120,7 +140,10 @@ scripts/cutover-rust-paygate.sh install \
 
 Installation first revalidates W1 host/target/launcher/supervisor/state identity,
 candidate hashes, commit, lockfile, inactive process state, and complete live
-acceptance gates. Under an acceptance-file sibling lock it records the exact
+acceptance gates. It then takes the exact candidate-bound deployment lock
+exclusively before its final process scan and holds it through publication,
+launcher/environment mutation, and final verification. Under an acceptance-file
+sibling lock it records the exact
 old environment and `bin/paygate` filesystem identities and backs up the four
 state paths. It publishes the rollback metadata, immutable receipt, and
 installed acceptance, switches the launcher to Rust, then atomically renames
@@ -220,21 +243,45 @@ canonical acceptance and rollback paths, both sessions, install epoch,
 rollback-manifest hash, and both launcher targets must all match; replacement,
 extra fields, binding drift, or permission drift is a refusal.
 
-Rollback authority comes from the preflight, rollback manifest, and receipt,
-not from mutable acceptance. Therefore rollback remains available if a crash
-leaves Rust active but acceptance is missing, malformed, or stale; it is also a
-safe no-op when the exact original Python launcher is already restored. If the
-original environment is present while Rust is still the top launcher, rollback
-changes only that launcher and never rewrites state. Only the exact
-original-absent/quarantine-present/Rust-launcher state restores backed-up state;
-it does so once, renames quarantine back, verifies the old entrypoint, and
-restores the top launcher last. Both/neither environment, identity drift, a
-quarantined environment with a non-Rust launcher, or an unknown third launcher
-is refused before mutation. Rollback does not need to
-rewrite the mutable acceptance phase: the retained receipt permanently consumes
-the session. Reinstall always requires a new acceptance file/session and all seven manual
-live approvals. After a crash, retain the receipt and rollback directory and
-run the normal rollback command; never reset acceptance or reuse evidence.
+Rollback authority comes from the preflight, rollback manifest, receipt, and—
+after restoration starts—one owner-only runtime recovery marker. It does not
+come from mutable acceptance. Rollback therefore remains available if a crash
+leaves Rust active but acceptance is missing, malformed, or stale. With no
+recovery marker, an exact original-environment/Python-launcher deployment is a
+safe no-op; later legitimate Python state changes are not overwritten.
+
+Before touching live state, rollback takes the exclusive runtime lock, confirms
+its package-time device/inode binding is unchanged, confirms the recorded
+supervisor and product processes are stopped, opens all four
+immutable backups without following symlinks, verifies their recorded inode,
+type, digest, and destination-parent identities, and durably copies every backup
+to fixed staging paths. A pre-marker crash may leave staging residue; the next
+run removes and rebuilds only the exact owned, non-symlink staging objects. A
+parked object without a marker is invalid and requires investigation.
+
+Rollback then publishes exactly one
+`paygate-rust-rollback-recovery-v1` marker beside the runtime lock. The marker
+binds the install session and rollback-manifest hash to every live, backup,
+staging, parked, launcher, environment, and parent identity. It is never
+rewritten and contains no phase or per-entry state. Recovery infers progress
+from the filesystem: live+stage moves live to parked and stage to live;
+absent+stage+parked moves stage to live; restored+parked needs cleanup; and a
+restored object with neither private path is complete. Every other shape,
+including destination+stage+parked, symlinks, wrong types or owners, changed
+parents, and digest drift, is rejected before another mutation.
+
+Recovery only moves forward toward Python. After all four state paths verify,
+it accepts only quarantine/Rust, original/Rust, or fully restored
+original/Python deployment shapes. It restores the recorded Python environment
+when needed, removes only marker-bound staging and parked objects, reverifies
+the complete restored state, and switches the launcher to Python last. Only
+after the full Python deployment verifies does it unlink and fsync removal of
+the marker. Any failure after marker publication leaves the marker in place,
+which blocks Rust runtime startup. Retain the marker, receipt, and rollback
+directory and rerun the same rollback command until it reports success. Never
+delete or edit the marker, restore parked Rust-era state, switch the launcher
+back to Rust, reset acceptance, or reuse cutover evidence. Reinstall requires a
+new acceptance file/session and all seven manual live approvals.
 
 After successful restart/cache/runtime-only validation, and no later than 24
 hours after installation, explicitly cross the recovery boundary:
