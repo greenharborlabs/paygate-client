@@ -3,7 +3,7 @@ set -euo pipefail
 
 CONFIG_DIR="${PAYGATE_CLIENT_CONFIG_DIR:-$HOME/.config/paygate-client}"
 CONFIG_PATH="$CONFIG_DIR/config.yaml"
-ENV_PATH="$CONFIG_DIR/voltage-env.sh"
+ENV_PATH="$CONFIG_DIR/paygate-env.sh"
 
 DEFAULT_NODE_HOST="greenharborlabs-lightning-node.m.voltageapp.io"
 DEFAULT_ALLOWED_HOST="127.0.0.1:8080"

@@ -52,7 +52,7 @@ scripts/setup-voltage-paygate.sh
 The wizard prompts for the Voltage REST URL, macaroon hex, optional TLS cert
 path, allowlist entries, and spend caps. It writes the Paygate config to
 `~/.config/paygate-client/config.yaml` and stores secrets only in
-`~/.config/paygate-client/voltage-env.sh`.
+`~/.config/paygate-client/paygate-env.sh`.
 
 ## Breez Preimage Doctor
 
@@ -533,6 +533,11 @@ export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
 paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
 ```
 
+For restart-persistent local operation, put those two `export` lines in the
+owner-only `~/.config/paygate-client/paygate-env.sh` companion file and set its
+mode to `0600`. Process environment values override the companion file. The
+legacy `voltage-env.sh` filename is read only when `paygate-env.sh` is absent.
+
 The Breez backend checks the prepared `lightning_fee_sats` before submitting the
 payment, sends with `prefer_spark=false`, and refuses success unless the returned
 preimage verifies against the payment hash.
@@ -670,9 +675,11 @@ cap, or daily budget.
 `PAYGATE_CLIENT_LND_TLS_CERT_PATH`, or
 `PAYGATE_CLIENT_PHOENIXD_PASSWORD`. If you used
 `scripts/setup-voltage-paygate.sh`, make sure
-`~/.config/paygate-client/voltage-env.sh` exists next to
-`~/.config/paygate-client/config.yaml`; the CLI loads that companion file
-automatically.
+`~/.config/paygate-client/paygate-env.sh` exists next to
+`~/.config/paygate-client/config.yaml`; the CLI loads that generic companion
+file automatically. Existing installations that only have `voltage-env.sh`
+continue to use it as a legacy fallback. When `paygate-env.sh` exists, the two
+files are not merged, and process environment values retain precedence.
 
 `credentialCache.hit: true`: the request succeeded with a cached payment
 credential and did not pay a new invoice.

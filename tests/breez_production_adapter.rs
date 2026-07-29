@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use paygate::config::{BreezNetwork, EnvRef, load_config};
+use paygate::config::{BreezNetwork, EnvRef, load_config, load_config_env};
 use paygate::payers::base::PaymentError;
 use paygate::payers::breez::{
     BreezSecretProvider, BreezSparkSdk, ProcessBreezSecrets, ProductionBreezSparkSdk,
@@ -73,7 +73,7 @@ fn selected_breez_config_retains_references_but_never_secret_values() {
     let api_secret = "sentinel-api-secret";
     let mnemonic_secret = "sentinel mnemonic secret";
     fs::write(
-        root.path().join("voltage-env.sh"),
+        root.path().join("paygate-env.sh"),
         format!(
             "export PAYGATE_TEST_BREEZ_API_KEY='{api_secret}'\nexport PAYGATE_TEST_BREEZ_MNEMONIC='{mnemonic_secret}'\n"
         ),
@@ -95,6 +95,44 @@ fn selected_breez_config_retains_references_but_never_secret_values() {
     let debug = format!("{breez:?}");
     assert!(!debug.contains(api_secret));
     assert!(!debug.contains(mnemonic_secret));
+}
+
+#[test]
+fn generic_companion_env_is_preferred_without_merging_legacy_values() {
+    let root = TestDir::new();
+    let config_path = root.path().join("config.yaml");
+    let suffix = format!(
+        "{}_{}",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let shared = format!("PAYGATE_TEST_SHARED_{suffix}");
+    let generic_only = format!("PAYGATE_TEST_GENERIC_{suffix}");
+    let legacy_only = format!("PAYGATE_TEST_LEGACY_{suffix}");
+    fs::write(&config_path, "payer: {}\n").unwrap();
+    fs::write(
+        root.path().join("paygate-env.sh"),
+        format!("export {generic_only}='present'\nexport {shared}='generic'\n"),
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("voltage-env.sh"),
+        format!("export {legacy_only}='stale'\nexport {shared}='legacy'\n"),
+    )
+    .unwrap();
+    // SAFETY: this test owns this process-unique variable and removes it
+    // before returning.
+    unsafe { std::env::set_var(&shared, "process") };
+    let _env_guard = EnvGuard(shared.clone());
+
+    let loaded = load_config_env(&config_path);
+
+    assert_eq!(loaded.get(&shared).map(String::as_str), Some("process"));
+    assert_eq!(
+        loaded.get(&generic_only).map(String::as_str),
+        Some("present")
+    );
+    assert!(!loaded.contains_key(&legacy_only));
 }
 
 struct EnvGuard(String);
@@ -120,7 +158,7 @@ impl BreezSecretProvider for ReloadingCountingSecrets {
 }
 
 #[test]
-fn wallet_resolution_reloads_voltage_env_with_process_precedence_without_retention() {
+fn wallet_resolution_reloads_paygate_env_with_process_precedence_without_retention() {
     let root = TestDir::new();
     let unique = format!(
         "{}_{}",
@@ -138,7 +176,7 @@ fn wallet_resolution_reloads_voltage_env_with_process_precedence_without_retenti
         .replace("PAYGATE_TEST_BREEZ_MNEMONIC", &mnemonic_var);
     fs::write(&config_path, text).unwrap();
     fs::write(
-        root.path().join("voltage-env.sh"),
+        root.path().join("paygate-env.sh"),
         format!("export {api_var}='{file_api}'\nexport {mnemonic_var}='{file_mnemonic}'\n"),
     )
     .unwrap();

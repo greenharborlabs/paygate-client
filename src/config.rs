@@ -98,7 +98,10 @@ pub fn expand_path(path: impl AsRef<Path>) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Load config with process environment taking precedence over `voltage-env.sh`.
+/// Load config with process environment taking precedence over the preferred
+/// `paygate-env.sh`, or the legacy `voltage-env.sh` when the generic file is
+/// absent. The files are never merged, so stale provider credentials cannot
+/// bleed into a new deployment configuration.
 pub fn load_config(path: impl AsRef<Path>) -> Result<PaygateConfig, ConfigError> {
     let expanded = expand_path(path);
     let path = expanded.as_path();
@@ -214,11 +217,15 @@ pub fn load_config_env(path: impl AsRef<Path>) -> HashMap<String, String> {
     let expanded = expand_path(path);
     let path = expanded.as_path();
     let mut result = HashMap::new();
-    if let Ok(text) = fs::read_to_string(
-        path.parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("voltage-env.sh"),
-    ) {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let generic_env = parent.join("paygate-env.sh");
+    let legacy_env = parent.join("voltage-env.sh");
+    let env_path = if generic_env.exists() {
+        generic_env
+    } else {
+        legacy_env
+    };
+    if let Ok(text) = fs::read_to_string(env_path) {
         for line in text.lines() {
             if let Some(rest) = line.trim().strip_prefix("export ") {
                 if let Some((key, value)) = rest.split_once('=') {
