@@ -40,6 +40,11 @@ scripts/package-rust-paygate.sh provision-lock \
 
 scripts/package-rust-paygate.sh \
   --repo "$repo" --record "$preflight" --output "$candidate"
+
+# If Breez is the selected backend, securely persist its already-exported
+# secrets and verify both the candidate and frozen Python rollback launcher.
+scripts/setup-breez-cutover-env.sh --use-process-env \
+  --candidate "$candidate/paygate"
 ```
 
 `operator_id` is a non-secret audit identifier. Every checkpoint records it,
