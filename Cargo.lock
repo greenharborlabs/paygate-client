@@ -3671,6 +3671,7 @@ dependencies = [
  "bech32",
  "bitcoin",
  "breez-sdk-spark",
+ "chrono",
  "clap",
  "fs4",
  "hex",

@@ -181,7 +181,7 @@ fn parse_payment_wire(
         .ok_or(ChallengeError::Malformed)?;
     let expires = params
         .get("expires")
-        .map(|value| value.parse::<i64>().map_err(|_| ChallengeError::Malformed))
+        .map(|value| parse_expiry(value))
         .transpose()?;
     if expires.is_some_and(|expires| expires <= now) {
         return Err(ChallengeError::Expired);
@@ -214,6 +214,14 @@ fn parse_payment_wire(
         description,
         expires,
     }))
+}
+
+fn parse_expiry(value: &str) -> Result<i64, ChallengeError> {
+    value.parse::<i64>().or_else(|_| {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .map(|expiry| expiry.timestamp())
+            .map_err(|_| ChallengeError::Malformed)
+    })
 }
 
 fn parse_l402_wire(params: BTreeMap<String, String>) -> Result<ParsedChallenge, ChallengeError> {

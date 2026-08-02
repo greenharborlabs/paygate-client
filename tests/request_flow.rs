@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use bitcoin::hashes::{Hash, sha256};
 use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use lightning_invoice::{Currency, InvoiceBuilder, PaymentSecret};
-use paygate::challenge::{ChallengeProtocol, ProtocolPreference, parse_www_authenticate};
+use paygate::challenge::{
+    ChallengeError, ChallengeProtocol, ProtocolPreference, parse_www_authenticate,
+};
 use paygate::challenge::{L402WireChallenge, ParsedChallenge, PaymentWireChallenge};
 use paygate::commands::request::{
     RequestCache, RequestOptions, RequestTransport, build_request_policy_hash, execute_with,
@@ -944,6 +946,49 @@ fn repeated_challenges_follow_preference_and_l402_opt_in() {
     assert_eq!(l402.protocol(), ChallengeProtocol::L402);
     let payment_only = parse_www_authenticate(&values[..1], ProtocolPreference::Payment, false, 0);
     assert!(payment_only.is_err());
+}
+
+#[test]
+fn reference_payment_rfc3339_expiry_remains_preferred_over_l402() {
+    let request = paygate::serialization::base64_url_nopad(
+        serde_json::to_string(&serde_json::json!({
+            "amount": "10",
+            "currency": "BTC",
+            "methodDetails": {
+                "invoice": "lnbc10n1reference",
+                "network": "mainnet",
+                "paymentHash": "ab".repeat(32),
+            },
+        }))
+        .unwrap()
+        .as_bytes(),
+    );
+    let values = vec![
+        format!(
+            "Payment id=pay_reference, request=\"{request}\", \
+             expires=\"2026-06-12T03:37:12.085906Z\""
+        ),
+        "L402 token=l402-token, invoice=lnbc10n1fallback".to_owned(),
+    ];
+
+    let parsed =
+        parse_www_authenticate(&values, ProtocolPreference::Payment, true, 1_700_000_000).unwrap();
+
+    let ParsedChallenge::Payment(payment) = parsed else {
+        panic!("valid preferred Payment challenge fell back to L402");
+    };
+    assert_eq!(payment.amount_sats, 10);
+    assert_eq!(payment.expires, Some(1_781_235_432));
+
+    assert_eq!(
+        parse_www_authenticate(
+            &values[..1],
+            ProtocolPreference::Payment,
+            true,
+            1_781_235_433,
+        ),
+        Err(ChallengeError::Expired),
+    );
 }
 
 #[tokio::test]

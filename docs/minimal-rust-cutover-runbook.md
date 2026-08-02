@@ -31,6 +31,8 @@ preflight=/secure/operator/path/paygate-preflight.json
 candidate=/secure/operator/path/paygate-rust-candidate
 rollback=/secure/operator/path/paygate-python-rollback
 acceptance=/secure/operator/path/paygate-acceptance.json
+config=/secure/operator/path/config.yaml
+protected_url=https://approved.example/protected-resource
 operator_id=operator-01
 
 # One-time host provisioning. Run exactly once for this preflight record.
@@ -126,9 +128,30 @@ scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
   --name CUTOVER-PROTECTED-REQUEST-01 --confirm
 ```
 
-Run it once. Verify one initial/cached attempt, no more than one payment, one
-authenticated same-origin retry, the success envelope, and the expected server
-response. Record only the pass fact:
+Run it once with the challenge-defined cache policy and JSON tracing. Verify
+one initial/cached attempt, no more than one payment, one authenticated
+same-origin retry, the success envelope, and the expected server response:
+
+```bash
+"$candidate/paygate" request GET "$protected_url" --config "$config" \
+  --cache-policy challenge-defined --trace-json
+```
+
+The accepted trace must select the configured `Payment` protocol and contain
+`credential.cached` with a non-null future expiry. An L402 fallback, a missing
+cache event, or a null/expired expiry is not cache-ready for this cutover: do
+not record `request-pass`, do not retry, and do not install. List the redacted
+credential metadata and confirm the exact request has a usable record after
+the authenticated retry (`expiresAt` is in the future and `maxUses` is null or
+`useCount < maxUses`):
+
+```bash
+"$candidate/paygate" credentials list --profile default
+```
+
+The list operation must also prove the authorization secret remains
+retrievable from its configured secure storage; an entry whose secret cannot
+be loaded is omitted and therefore cannot qualify. Record only the pass fact:
 
 ```bash
 scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
@@ -209,9 +232,11 @@ scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
 ```
 
 Restart the host or the W1-recorded supervisor using its normal operator
-procedure. Repeat the protected request from the installed command. It must
-either use the compatible cached credential without payment or reject and
-safely evict it without double-paying. Record the result:
+procedure. Repeat the exact protected request from the installed command
+without `--refresh-credential`. It must report a cache hit and `paid: false`,
+with no challenge or payment trace event. A miss or rejection is not
+authorized to create a replacement payment: stop and roll back instead of
+retrying. Record the result:
 
 ```bash
 scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
