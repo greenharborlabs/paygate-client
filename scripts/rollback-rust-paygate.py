@@ -41,14 +41,6 @@ def digest(path):
     return result.hexdigest()
 
 
-def descriptor_path(fd):
-    for root in ("/proc/self/fd", "/dev/fd"):
-        path = pathlib.Path(root) / str(fd)
-        if path.exists():
-            return path
-    fail("descriptor-backed staging is unavailable")
-
-
 def type_matches(path, path_type):
     try:
         metadata = path.lstat()
@@ -69,6 +61,27 @@ def identity(path):
         "mode": stat.S_IMODE(metadata.st_mode),
         "digest": digest(path),
     }
+
+
+def digest_descriptor(fd, path_type):
+    if path_type == "file":
+        result = hashlib.sha256()
+        offset = 0
+        while True:
+            chunk = os.pread(fd, 1024 * 1024, offset)
+            if not chunk:
+                return result.hexdigest()
+            result.update(chunk)
+            offset += len(chunk)
+    if path_type == "directory":
+        cwd_fd = os.open(".", os.O_RDONLY)
+        try:
+            os.fchdir(fd)
+            return digest(pathlib.Path("."))
+        finally:
+            os.fchdir(cwd_fd)
+            os.close(cwd_fd)
+    fail("state backup type mismatch")
 
 
 def identity_matches(path, path_type, expected):
@@ -343,13 +356,13 @@ def main():
             or not expected_type
             or backup_stat.st_uid not in (0, uid)
             or (backup_stat.st_dev, backup_stat.st_ino) != (item.get("backup_dev"), item.get("backup_ino"))
-            or digest(descriptor_path(backup_fd)) != item["sha256"]
+            or digest_descriptor(backup_fd, path_type) != item["sha256"]
             or str(destination.parent.resolve()) != item["parent_canonical"]
             or (parent_stat.st_dev, parent_stat.st_ino) != (item.get("parent_dev"), item.get("parent_ino"))
         ):
             os.close(backup_fd)
             fail("state backup mismatch")
-        backup_handles[item["key"]] = (backup_fd, descriptor_path(backup_fd), backup_stat)
+        backup_handles[item["key"]] = (backup_fd, backup_stat)
     if "replace-backup-after-open" in hooks:
         replace_test_backup()
 
@@ -370,11 +383,12 @@ def main():
         }
 
     def backup_binding(item):
-        _, descriptor, metadata = backup_handles[item["key"]]
+        backup_fd, metadata = backup_handles[item["key"]]
         return {
             "path": str(rollback_dir / item["backup"]), "dev": metadata.st_dev,
             "ino": metadata.st_ino, "uid": metadata.st_uid,
-            "mode": stat.S_IMODE(metadata.st_mode), "digest": digest(descriptor),
+            "mode": stat.S_IMODE(metadata.st_mode),
+            "digest": digest_descriptor(backup_fd, item["path_type"]),
         }
 
     def publish_marker(payload):
@@ -419,7 +433,7 @@ def main():
         entries = []
         try:
             for index, item in enumerate(manifest["state"]):
-                backup_fd, _, backup_stat = backup_handles[item["key"]]
+                backup_fd, backup_stat = backup_handles[item["key"]]
                 destination, stage, parked = paths(index, item)
                 if not type_matches(destination, item["path_type"]) or destination.lstat().st_uid != uid:
                     raise RuntimeError("live state identity drift")

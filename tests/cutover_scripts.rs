@@ -390,6 +390,9 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
     let launcher = root.join("deploy/bin/paygate");
     symlink(&old_target, &launcher).unwrap();
     fs::write(root.join("state/config.yaml"), "payer: test-mode\n").unwrap();
+    let wallet_bytes = b"wallet snapshot\n";
+    fs::create_dir_all(root.join("state/wallet/mainnet")).unwrap();
+    fs::write(root.join("state/wallet/mainnet/storage.sql"), wallet_bytes).unwrap();
     fs::write(root.join("state/credentials.json"), "").unwrap();
     fs::write(root.join("state/ledger.json"), "{}\n").unwrap();
 
@@ -943,9 +946,10 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
             .as_deref()
             == Some("payer: test-mode\n")
             && root.join("state/wallet").is_dir()
-            && fs::read_dir(root.join("state/wallet"))
-                .map(|mut entries| entries.next().is_none())
-                .unwrap_or(false)
+            && fs::read(root.join("state/wallet/mainnet/storage.sql"))
+                .ok()
+                .as_deref()
+                == Some(wallet_bytes)
             && fs::read_to_string(root.join("state/credentials.json"))
                 .ok()
                 .as_deref()
@@ -1006,16 +1010,19 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
     }
     fs::rename(&parked_backup_credentials, &backup_credentials).unwrap();
     let backup_wallet = rollback.join("state/wallet_storage");
-    assert!(backup_wallet.is_dir() && fs::read_dir(&backup_wallet).unwrap().next().is_none());
+    assert_eq!(
+        fs::read(backup_wallet.join("mainnet/storage.sql")).unwrap(),
+        wallet_bytes
+    );
     let parked_backup_wallet = rollback.join("state/wallet_storage.parked");
     fs::rename(&backup_wallet, &parked_backup_wallet).unwrap();
-    let missing_empty_directory_refused = !run(Command::new(&cutover)
+    let missing_directory_refused = !run(Command::new(&cutover)
         .arg("rollback")
         .args(["--record"])
         .arg(&record)
         .args(["--rollback-dir"])
         .arg(&rollback));
-    let missing_empty_directory_unchanged = installed_is_unchanged();
+    let missing_directory_unchanged = installed_is_unchanged();
     if !root.join("state/wallet").exists() {
         fs::create_dir(root.join("state/wallet")).unwrap();
     }
@@ -1025,8 +1032,8 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
         "missing empty-file backup allowed partial rollback mutation"
     );
     assert!(
-        missing_empty_directory_refused && missing_empty_directory_unchanged,
-        "missing empty-directory backup allowed partial rollback mutation"
+        missing_directory_refused && missing_directory_unchanged,
+        "missing directory backup allowed partial rollback mutation"
     );
     let mut active_rust = Command::new(candidate.join("paygate"))
         .env("PAYGATE_CUTOVER_TEST_SLEEP", "1")
@@ -1470,10 +1477,7 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
     );
     assert!(
         root.join("state/wallet").is_dir()
-            && fs::read_dir(root.join("state/wallet"))
-                .unwrap()
-                .next()
-                .is_none()
+            && fs::read(root.join("state/wallet/mainnet/storage.sql")).unwrap() == wallet_bytes
     );
     assert_eq!(
         fs::read_to_string(root.join("state/credentials.json")).unwrap(),
@@ -1840,10 +1844,7 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
     );
     assert!(
         root.join("state/wallet").is_dir()
-            && fs::read_dir(root.join("state/wallet"))
-                .unwrap()
-                .next()
-                .is_none()
+            && fs::read(root.join("state/wallet/mainnet/storage.sql")).unwrap() == wallet_bytes
     );
     assert_eq!(
         fs::read_to_string(root.join("state/credentials.json")).unwrap(),
