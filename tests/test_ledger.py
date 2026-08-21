@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 
@@ -22,6 +23,20 @@ def test_successful_reservation_commit_is_date_scoped(tmp_path) -> None:
 
     assert ledger.spent_on(date(2026, 6, 11)) == 20
     assert ledger.spent_on(date(2026, 6, 12)) == 0
+
+
+def test_ledger_transaction_repairs_owner_only_file_permissions(tmp_path) -> None:
+    ledger_path = tmp_path / "ledger.json"
+    lock_path = tmp_path / "ledger.json.lock"
+    ledger_path.write_text("{}\n", encoding="utf-8")
+    lock_path.write_text("", encoding="utf-8")
+    ledger_path.chmod(0o644)
+    lock_path.chmod(0o644)
+
+    DailySpendLedger(ledger_path).spent_today()
+
+    assert stat.S_IMODE(ledger_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
 
 
 def test_rollback_releases_reserved_spend(tmp_path) -> None:
