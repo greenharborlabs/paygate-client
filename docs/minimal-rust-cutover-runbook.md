@@ -40,6 +40,13 @@ scripts/package-rust-paygate.sh provision-lock \
   --repo "$repo" --record "$preflight" \
   --confirm PROVISION_PAYGATE_RUNTIME_LOCK
 
+# Existing macOS deployments with a v1 binding only: after reviewing the
+# reboot device-remap authorization, create the immutable v2 sidecar once.
+scripts/package-rust-paygate.sh migrate-lock-binding \
+  --repo "$repo" --record "$preflight" \
+  --authorization /secure/operator/path/paygate-rollback-device-remap.json \
+  --confirm MIGRATE_PAYGATE_RUNTIME_LOCK_BINDING
+
 scripts/package-rust-paygate.sh \
   --repo "$repo" --record "$preflight" --output "$candidate"
 
@@ -63,7 +70,7 @@ target with `cargo build --locked --release --target … --bin paygate`. Review
 `manifest.json`, then run the repository fixture/oracle and Rust product tests
 against that same commit according to the release checklist. Re-run the W1
 wave guard before and after those tests. A dirty-baseline mismatch stops work.
-The explicit provisioning command creates or adopts the owner-only
+The explicit provisioning command creates the owner-only
 `.paygate-runtime.lock` beside the recorded launcher and writes the immutable
 owner-read-only binding record
 `.paygate-runtime.lock.binding.json` beside it. The binding is deployment-global,
@@ -71,13 +78,24 @@ not derived from the preflight filename, and provisioning refuses to adopt an
 existing unbound lock or run again once the binding exists. Preserve both files
 for the lifetime of every issued candidate: do not unlink, replace, hard-link,
 chmod, or edit either one. Ordinary packaging never creates or rebinds the
-lock; it requires the sidecar, verifies its bound preflight hash and exact lock
-device/inode, and compiles that identity into the candidate and manifest. A
+lock; it requires the sidecar, verifies its bound preflight hash and stable lock
+identity, and compiles that identity into the candidate and manifest. Linux
+uses device/inode identity. macOS uses the volume UUID plus the filesystem's
+persistent object number and generation, so an APFS device-number remap across
+a reboot does not invalidate the lock. A
 different preflight pathname does not authorize reprovisioning. If either
 object is lost or changed, stop: a new record alone is not sufficient recovery,
 and this workflow provides no automated way to retire an orphaned inode. Every
 runtime and maintenance operation fails closed if the provisioned lock identity
 changes.
+
+The migration command is only for an existing macOS v1 binding after an APFS
+device-number remap. It does not modify that immutable record. It verifies the
+current boot's reviewed rollback device-remap authorization and writes a second
+immutable `.paygate-runtime.lock.binding-v2.json` sidecar that hashes and names
+both pieces of prior evidence. Later packaging automatically prefers that v2
+sidecar. Never create a migration authorization merely to bypass another
+identity mismatch.
 Record the two redacted test facts, in order:
 
 ```bash
@@ -294,7 +312,7 @@ rollback evidence and use it only after confirming that inode, ownership,
 permissions, hashes, and paths are otherwise unchanged.
 
 Before touching live state, rollback takes the exclusive runtime lock, confirms
-its package-time device/inode binding is unchanged, confirms the recorded
+its stable package-time binding is unchanged, confirms the recorded
 supervisor and product processes are stopped, opens all four
 immutable backups without following symlinks, verifies their recorded inode,
 type, digest, and destination-parent identities, and durably copies every backup

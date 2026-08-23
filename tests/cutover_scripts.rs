@@ -1,7 +1,7 @@
 use fs4::FileExt;
 use std::fs;
 use std::fs::OpenOptions;
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -19,11 +19,9 @@ fn deployment_runtime_lock_is_bidirectional_and_marker_aware() {
     let uid = unsafe { libc::geteuid() };
     fs::write(&lock, "").unwrap();
     fs::set_permissions(&lock, fs::Permissions::from_mode(0o600)).unwrap();
-    let lock_metadata = fs::metadata(&lock).unwrap();
-    let dev = lock_metadata.dev();
-    let ino = lock_metadata.ino();
+    let identity = paygate::runtime_lock::identity_for_path(&lock).unwrap();
     let runtime =
-        paygate::runtime_lock::acquire_runtime_lock(&lock, uid, dev, ino, &marker).unwrap();
+        paygate::runtime_lock::acquire_runtime_lock(&lock, uid, &identity, &marker).unwrap();
     let contender = OpenOptions::new()
         .read(true)
         .write(true)
@@ -32,20 +30,20 @@ fn deployment_runtime_lock_is_bidirectional_and_marker_aware() {
     assert!(FileExt::try_lock(&contender).is_err());
     drop(runtime);
     FileExt::try_lock(&contender).unwrap();
-    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, dev, ino, &marker).is_err());
+    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, &identity, &marker).is_err());
     FileExt::unlock(&contender).unwrap();
     fs::write(&marker, "transaction-active\n").unwrap();
-    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, dev, ino, &marker).is_err());
+    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, &identity, &marker).is_err());
     fs::remove_file(&marker).unwrap();
     let lock_hardlink = root.join("lock-hardlink");
     fs::hard_link(&lock, &lock_hardlink).unwrap();
-    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, dev, ino, &marker).is_err());
+    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, &identity, &marker).is_err());
     fs::remove_file(&lock_hardlink).unwrap();
     let original_lock = root.join("original-lock");
     fs::rename(&lock, &original_lock).unwrap();
     fs::write(&lock, "").unwrap();
     fs::set_permissions(&lock, fs::Permissions::from_mode(0o600)).unwrap();
-    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, dev, ino, &marker).is_err());
+    assert!(paygate::runtime_lock::acquire_runtime_lock(&lock, uid, &identity, &marker).is_err());
     let _ = fs::remove_dir_all(&root);
 }
 
@@ -343,6 +341,7 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
         "package-rust-paygate.sh",
         "cutover-rust-paygate.sh",
         "rollback-rust-paygate.py",
+        "runtime_lock_identity.py",
     ] {
         fs::copy(
             source.join("scripts").join(name),
@@ -492,7 +491,7 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
     assert_eq!(binding_metadata.permissions().mode() & 0o777, 0o400);
     let runtime_binding: serde_json::Value =
         serde_json::from_slice(&fs::read(&runtime_binding_record).unwrap()).unwrap();
-    assert_eq!(runtime_binding["schema"], "paygate-runtime-lock-binding-v1");
+    assert_eq!(runtime_binding["schema"], "paygate-runtime-lock-binding-v2");
     assert!(!run(Command::new(&package)
         .arg("provision-lock")
         .args(["--repo"])
@@ -525,22 +524,13 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
         candidate_manifest["runtime_lock_uid"].as_u64(),
         Some(unsafe { libc::geteuid() } as u64)
     );
-    let runtime_lock_metadata = fs::metadata(&runtime_lock).unwrap();
     assert_eq!(
-        candidate_manifest["runtime_lock_dev"].as_u64(),
-        Some(runtime_lock_metadata.dev())
+        candidate_manifest["runtime_lock_identity"],
+        runtime_binding["runtime_lock_identity"]
     );
     assert_eq!(
-        candidate_manifest["runtime_lock_ino"].as_u64(),
-        Some(runtime_lock_metadata.ino())
-    );
-    assert_eq!(
-        runtime_binding["runtime_lock_dev"].as_u64(),
-        Some(runtime_lock_metadata.dev())
-    );
-    assert_eq!(
-        runtime_binding["runtime_lock_ino"].as_u64(),
-        Some(runtime_lock_metadata.ino())
+        candidate_manifest["runtime_lock_binding"].as_str(),
+        Some(runtime_binding_record.to_string_lossy().as_ref())
     );
     let runtime_lock_handle = OpenOptions::new()
         .read(true)
@@ -912,12 +902,8 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
         Some(runtime_marker.to_string_lossy().as_ref())
     );
     assert_eq!(
-        rollback_manifest["runtime_lock_dev"],
-        candidate_manifest["runtime_lock_dev"]
-    );
-    assert_eq!(
-        rollback_manifest["runtime_lock_ino"],
-        candidate_manifest["runtime_lock_ino"]
+        rollback_manifest["runtime_lock_identity"],
+        candidate_manifest["runtime_lock_identity"]
     );
     for field in [
         "launcher_symlink_target",
@@ -981,8 +967,9 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
     let runtime_guard = paygate::runtime_lock::acquire_runtime_lock(
         &runtime_lock,
         unsafe { libc::geteuid() },
-        candidate_manifest["runtime_lock_dev"].as_u64().unwrap(),
-        candidate_manifest["runtime_lock_ino"].as_u64().unwrap(),
+        candidate_manifest["runtime_lock_identity"]
+            .as_str()
+            .unwrap(),
         &runtime_marker,
     )
     .unwrap();
@@ -1575,8 +1562,9 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
         paygate::runtime_lock::acquire_runtime_lock(
             &runtime_lock,
             unsafe { libc::geteuid() },
-            candidate_manifest["runtime_lock_dev"].as_u64().unwrap(),
-            candidate_manifest["runtime_lock_ino"].as_u64().unwrap(),
+            candidate_manifest["runtime_lock_identity"]
+                .as_str()
+                .unwrap(),
             &runtime_marker
         )
         .is_err()
