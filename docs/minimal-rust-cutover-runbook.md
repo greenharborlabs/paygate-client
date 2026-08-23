@@ -18,6 +18,10 @@ or shell argument.
   an unknown or changed supervisor is a hard stop.
 - Invoice and protected-request approval are separate checkpoints. An earlier
   passing test or doctor result is never approval to pay.
+- The first paid action starts one uninterrupted live-cutover phase. Do not
+  approve it unless the operator can complete the invoice, protected request,
+  cache-window capture, installation, shutdown, restart, and post-reboot cache
+  validation immediately. A planned pause after payment is a refusal.
 - Keep the candidate directory and rollback directory on the deployment host
   through the restart/cache validation. Finalize within 24 hours or roll back.
 
@@ -34,6 +38,7 @@ acceptance=/secure/operator/path/paygate-acceptance.json
 config=/secure/operator/path/config.yaml
 protected_url=https://approved.example/protected-resource
 operator_id=operator-01
+cache_window=/secure/operator/path/paygate-cache-window.json
 
 # One-time host provisioning. Run exactly once for this preflight record.
 scripts/package-rust-paygate.sh provision-lock \
@@ -117,7 +122,25 @@ scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
   --result PASS --confirm
 ```
 
-## 2. Separately approve the one invoice and one request
+## 2. Enter one uninterrupted live window and approve both payments separately
+
+**Stop here unless the rest of the live cutover will be completed now.** From
+the first invoice submission through post-reboot cache validation, the operator
+must remain available, the Mac must be ready to restart, and no unrelated
+Paygate request or production smoke test may run. Continuing means accepting
+one 10-sat invoice, one 10-sat protected request, up to 4 sats of fees, then
+installing, quitting the operator tools, restarting, and running the prepared
+one-shot verifier without a planned pause.
+
+Before the first paid action, state this commitment explicitly:
+
+```text
+COMPLETE_INSTALL_REBOOT_AND_VERIFY_NOW
+```
+
+Do not treat this phrase as reusable approval for another session or payment.
+The exact post-reboot deadline is not known until the protected request returns
+its fresh credential. The cache-window capture below calculates and freezes it.
 
 An operator must inspect the named invoice and all three caps before approval:
 
@@ -151,6 +174,7 @@ one initial/cached attempt, no more than one payment, one authenticated
 same-origin retry, the success envelope, and the expected server response:
 
 ```bash
+protected_request_started_at=$(date +%s)
 "$candidate/paygate" request GET "$protected_url" --config "$config" \
   --cache-policy challenge-defined --trace-json
 ```
@@ -169,7 +193,31 @@ the authenticated retry (`expiresAt` is in the future and `maxUses` is null or
 
 The list operation must also prove the authorization secret remains
 retrievable from its configured secure storage; an entry whose secret cannot
-be loaded is omitted and therefore cannot qualify. Record only the pass fact:
+be loaded is omitted and therefore cannot qualify. Before recording the pass
+fact, bind the exact fresh credential, candidate hash, acceptance session,
+request scope, expiry, and a ten-minute safety margin into an immutable
+cache-window record:
+
+```bash
+/usr/bin/python3 scripts/cutover-cache-window.py capture \
+  --paygate "$candidate/paygate" \
+  --acceptance "$acceptance" \
+  --output "$cache_window" \
+  --url "$protected_url" \
+  --issued-after-epoch "$protected_request_started_at" \
+  --minimum-remaining-seconds 600 \
+  --confirm COMPLETE_INSTALL_REBOOT_AND_VERIFY_NOW
+```
+
+Capture refuses an old, ambiguous, secret-unavailable, nearly expired, or
+wrong-scope credential and never overwrites an existing state file. Its JSON
+output contains `mustStartPostRebootByUtc` and `secondsUntilDeadline`. Tell the
+operator the exact deadline and remaining minutes immediately. If capture
+fails, do not record `request-pass`, do not install, and do not retry either
+payment. A new attempt requires a fresh acceptance session.
+
+Once capture succeeds, the live phase is armed. Do not pause. Record only the
+pass fact:
 
 ```bash
 scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
@@ -249,12 +297,33 @@ scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
   --result PASS --confirm
 ```
 
+Before restarting, recheck the frozen cache window through the installed
+launcher. This is local credential inspection and makes no HTTP request or
+payment:
+
+```bash
+/usr/bin/python3 scripts/cutover-cache-window.py verify \
+  --paygate "$(command -v paygate)" \
+  --state "$cache_window"
+```
+
+Read the new `secondsUntilDeadline` aloud. If it is not comfortably sufficient
+for an immediate restart, roll back instead of restarting. The deadline is the
+latest allowed **start** time for the post-reboot verifier; the bound credential
+still retains the configured ten-minute safety margin after that point.
+
 Restart the host or the W1-recorded supervisor using its normal operator
 procedure. Repeat the exact protected request from the installed command
 without `--refresh-credential`. It must report a cache hit and `paid: false`,
 with no challenge or payment trace event. A miss or rejection is not
 authorized to create a replacement payment: stop and roll back instead of
-retrying. Record the result:
+retrying. The prepared one-shot verifier must first run
+`cutover-cache-window.py verify` against the installed launcher and immutable
+state. Only a passing local check may create the attempt marker and issue the
+request with deliberately unusable wallet credentials. It must preserve its
+owner-only, redacted JSON trace on failure instead of deleting the only error
+evidence. A precheck refusal makes no request; an attempted HTTP validation is
+never retried. Record the result:
 
 ```bash
 scripts/cutover-rust-paygate.sh checkpoint --candidate "$candidate" \
