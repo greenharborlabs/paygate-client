@@ -3,6 +3,7 @@ name = "platform-utils"
 version = "0.1.0+boltz.809ac77c"
 edition = "2024"
 rust-version = "1.88"
+license = "MIT"
 
 [dependencies]
 async-trait = "=0.1.88"

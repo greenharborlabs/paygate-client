@@ -3,6 +3,7 @@ name = "platform-utils"
 version = "0.1.0+spark.f660f5a3"
 edition = "2024"
 rust-version = "1.88"
+license = "MIT"
 
 [dependencies]
 async-trait = "=0.1.88"

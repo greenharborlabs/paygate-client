@@ -180,6 +180,8 @@ impl<F> RealPayerFactory<F> {
 
 /// Execute the payment half of a request as one monotonic ledger transaction.
 /// The returned authorization can only exist after common proof verification.
+// Keeping these transaction inputs explicit makes the payment boundary auditable.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_payment_transaction<P, F>(
     challenge: &ParsedChallenge,
     host: &str,

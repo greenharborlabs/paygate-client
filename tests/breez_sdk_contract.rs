@@ -9,7 +9,7 @@ use breez_sdk_spark::{
     PrepareSendPaymentResponse, SendPaymentOptions, SendPaymentRequest,
 };
 
-async fn bolt11_only_contract(sdk: &BreezSdk, prepared: PrepareSendPaymentResponse) {
+async fn bolt11_only_contract(sdk: &BreezSdk, _prepared: PrepareSendPaymentResponse) {
     let info = sdk.get_info(GetInfoRequest {
         ensure_synced: Some(false),
     });

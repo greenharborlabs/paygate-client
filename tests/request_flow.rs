@@ -7,7 +7,8 @@ use paygate::challenge::{
 };
 use paygate::challenge::{L402WireChallenge, ParsedChallenge, PaymentWireChallenge};
 use paygate::commands::request::{
-    RequestCache, RequestOptions, RequestTransport, build_request_policy_hash, execute_with,
+    RequestCache, RequestCacheError, RequestOptions, RequestTransport, build_request_policy_hash,
+    execute_with,
 };
 use paygate::config::{PayerConfig, PaygateConfig, ProtocolConfig};
 use paygate::http::{HttpError, HttpRequest, HttpResponse};
@@ -103,30 +104,42 @@ struct MemoryCache {
     fail_delete: bool,
 }
 impl RequestCache for MemoryCache {
-    fn get_scoped(&self, _: &CredentialScope, _: i64) -> Result<Option<CachedCredential>, ()> {
+    fn get_scoped(
+        &self,
+        _: &CredentialScope,
+        _: i64,
+    ) -> Result<Option<CachedCredential>, RequestCacheError> {
         if self.fail_get {
-            Err(())
+            Err(RequestCacheError)
         } else {
             Ok(self.values.lock().unwrap().first().cloned())
         }
     }
-    fn put(&self, c: CachedCredential) -> Result<(), ()> {
+    fn put(&self, c: CachedCredential) -> Result<(), RequestCacheError> {
         if self.fail_put {
-            Err(())
+            Err(RequestCacheError)
         } else {
             self.values.lock().unwrap().push(c);
             Ok(())
         }
     }
-    fn mark_success(&self, _: &str, _: i64) -> Result<(), ()> {
-        if self.fail_mark { Err(()) } else { Ok(()) }
+    fn mark_success(&self, _: &str, _: i64) -> Result<(), RequestCacheError> {
+        if self.fail_mark {
+            Err(RequestCacheError)
+        } else {
+            Ok(())
+        }
     }
-    fn mark_rejected(&self, _: &str, _: i64) -> Result<(), ()> {
-        if self.fail_mark { Err(()) } else { Ok(()) }
+    fn mark_rejected(&self, _: &str, _: i64) -> Result<(), RequestCacheError> {
+        if self.fail_mark {
+            Err(RequestCacheError)
+        } else {
+            Ok(())
+        }
     }
-    fn delete(&self, id: &str) -> Result<(), ()> {
+    fn delete(&self, id: &str) -> Result<(), RequestCacheError> {
         if self.fail_delete {
-            Err(())
+            Err(RequestCacheError)
         } else {
             self.values
                 .lock()

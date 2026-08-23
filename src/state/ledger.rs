@@ -418,12 +418,12 @@ fn today() -> String {
         // The Python ledger uses local `date.today()`, rather than UTC.
         let mut out: libc::tm = unsafe { std::mem::zeroed() };
         unsafe { libc::localtime_r(&seconds, &mut out) };
-        return format!(
+        format!(
             "{:04}-{:02}-{:02}",
             out.tm_year + 1900,
             out.tm_mon + 1,
             out.tm_mday
-        );
+        )
     }
     #[cfg(not(unix))]
     {

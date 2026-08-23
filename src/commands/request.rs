@@ -25,13 +25,19 @@ pub trait RequestTransport: Send + Sync {
     async fn send(&self, request: &HttpRequest) -> Result<HttpResponse, HttpError>;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RequestCacheError;
+
 pub trait RequestCache: Send + Sync {
-    fn get_scoped(&self, scope: &CredentialScope, now: i64)
-    -> Result<Option<CachedCredential>, ()>;
-    fn put(&self, credential: CachedCredential) -> Result<(), ()>;
-    fn mark_success(&self, id: &str, now: i64) -> Result<(), ()>;
-    fn mark_rejected(&self, id: &str, now: i64) -> Result<(), ()>;
-    fn delete(&self, id: &str) -> Result<(), ()>;
+    fn get_scoped(
+        &self,
+        scope: &CredentialScope,
+        now: i64,
+    ) -> Result<Option<CachedCredential>, RequestCacheError>;
+    fn put(&self, credential: CachedCredential) -> Result<(), RequestCacheError>;
+    fn mark_success(&self, id: &str, now: i64) -> Result<(), RequestCacheError>;
+    fn mark_rejected(&self, id: &str, now: i64) -> Result<(), RequestCacheError>;
+    fn delete(&self, id: &str) -> Result<(), RequestCacheError>;
 }
 
 pub struct ReqwestTransport {
@@ -53,19 +59,23 @@ impl RequestTransport for ReqwestTransport {
 
 pub struct NullRequestCache;
 impl RequestCache for NullRequestCache {
-    fn get_scoped(&self, _: &CredentialScope, _: i64) -> Result<Option<CachedCredential>, ()> {
+    fn get_scoped(
+        &self,
+        _: &CredentialScope,
+        _: i64,
+    ) -> Result<Option<CachedCredential>, RequestCacheError> {
         Ok(None)
     }
-    fn put(&self, _: CachedCredential) -> Result<(), ()> {
+    fn put(&self, _: CachedCredential) -> Result<(), RequestCacheError> {
         Ok(())
     }
-    fn mark_success(&self, _: &str, _: i64) -> Result<(), ()> {
+    fn mark_success(&self, _: &str, _: i64) -> Result<(), RequestCacheError> {
         Ok(())
     }
-    fn mark_rejected(&self, _: &str, _: i64) -> Result<(), ()> {
+    fn mark_rejected(&self, _: &str, _: i64) -> Result<(), RequestCacheError> {
         Ok(())
     }
-    fn delete(&self, _: &str) -> Result<(), ()> {
+    fn delete(&self, _: &str) -> Result<(), RequestCacheError> {
         Ok(())
     }
 }
@@ -75,20 +85,21 @@ impl RequestCache for FileCredentialCache {
         &self,
         requested: &CredentialScope,
         now: i64,
-    ) -> Result<Option<CachedCredential>, ()> {
-        self.get_scoped_fail_closed(requested, now).map_err(|_| ())
+    ) -> Result<Option<CachedCredential>, RequestCacheError> {
+        self.get_scoped_fail_closed(requested, now)
+            .map_err(|_| RequestCacheError)
     }
-    fn put(&self, credential: CachedCredential) -> Result<(), ()> {
-        self.put(credential).map_err(|_| ())
+    fn put(&self, credential: CachedCredential) -> Result<(), RequestCacheError> {
+        self.put(credential).map_err(|_| RequestCacheError)
     }
-    fn mark_success(&self, id: &str, now: i64) -> Result<(), ()> {
-        self.mark_success(id, now).map_err(|_| ())
+    fn mark_success(&self, id: &str, now: i64) -> Result<(), RequestCacheError> {
+        self.mark_success(id, now).map_err(|_| RequestCacheError)
     }
-    fn mark_rejected(&self, id: &str, now: i64) -> Result<(), ()> {
-        self.mark_rejected(id, now).map_err(|_| ())
+    fn mark_rejected(&self, id: &str, now: i64) -> Result<(), RequestCacheError> {
+        self.mark_rejected(id, now).map_err(|_| RequestCacheError)
     }
-    fn delete(&self, id: &str) -> Result<(), ()> {
-        self.delete(id).map_err(|_| ())
+    fn delete(&self, id: &str) -> Result<(), RequestCacheError> {
+        self.delete(id).map_err(|_| RequestCacheError)
     }
 }
 
@@ -144,7 +155,7 @@ where
     if !options.no_cache && !options.refresh_credential && !options.no_pay {
         let cached = match cache.get_scoped(&preliminary_scope, now) {
             Ok(value) => value,
-            Err(()) => {
+            Err(RequestCacheError) => {
                 return failure(
                     false,
                     "credential_state_failure",
@@ -434,16 +445,15 @@ where
                     "credential success state could not be saved",
                 ));
             }
-        } else if matches!(retry.status.as_u16(), 401 | 402) {
-            if (cache.mark_rejected(&record.credential_id, now).is_err()
+        } else if matches!(retry.status.as_u16(), 401 | 402)
+            && (cache.mark_rejected(&record.credential_id, now).is_err()
                 || cache.delete(&record.credential_id).is_err())
-                && state_error.is_none()
-            {
-                state_error = Some((
-                    "credential_state_failure",
-                    "rejected credential could not be evicted",
-                ));
-            }
+            && state_error.is_none()
+        {
+            state_error = Some((
+                "credential_state_failure",
+                "rejected credential could not be evicted",
+            ));
         }
     }
     let retry_error = if retry.status.is_success() {
