@@ -280,6 +280,19 @@ leaves Rust active but acceptance is missing, malformed, or stale. With no
 recovery marker, an exact original-environment/Python-launcher deployment is a
 safe no-op; later legitimate Python state changes are not overwritten.
 
+On macOS, a reboot or operating-system update can remap the APFS device number
+while preserving the recorded filesystem objects. Rollback remains fail-closed
+unless an operator supplies an absolute path in
+`PAYGATE_ROLLBACK_DEVICE_REMAP_AUTHORIZATION`. The referenced owner-only,
+single-link, mode-`0400` `paygate-rollback-device-remap-v1` JSON object must bind
+the current boot-session UUID, preflight and rollback-manifest hashes, installed
+Rust target and binary hash, rollback directory, runtime-lock path and inode,
+and the exact recorded-to-current device-number mapping. The authorization is
+valid only on macOS, for one boot and one installed candidate; missing, stale,
+extra, writable, or mismatched data is refused. Keep it with the immutable
+rollback evidence and use it only after confirming that inode, ownership,
+permissions, hashes, and paths are otherwise unchanged.
+
 Before touching live state, rollback takes the exclusive runtime lock, confirms
 its package-time device/inode binding is unchanged, confirms the recorded
 supervisor and product processes are stopped, opens all four
