@@ -3,7 +3,6 @@ import stat
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "setup-breez-cutover-env.sh"
 
@@ -36,8 +35,7 @@ def test_setup_breez_cutover_env_prefers_generic_and_preserves_legacy_entries(
             "BREEZ_MNEMONIC": "one two three four",
         },
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
     )
 

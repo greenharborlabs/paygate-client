@@ -172,10 +172,7 @@ class DailySpendLedger:
         try:
             lock_fd = os.open(
                 self._lock_path,
-                os.O_RDWR
-                | os.O_APPEND
-                | os.O_CREAT
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
             )
             os.fchmod(lock_fd, 0o600)
@@ -223,10 +220,7 @@ class DailySpendLedger:
         try:
             ledger_fd = os.open(
                 tmp_path,
-                os.O_WRONLY
-                | os.O_CREAT
-                | os.O_EXCL
-                | getattr(os, "O_NOFOLLOW", 0),
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
             )
             os.fchmod(ledger_fd, 0o600)
