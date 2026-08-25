@@ -1,0 +1,27 @@
+[package]
+name = "platform-utils"
+version = "0.1.0+boltz.809ac77c"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+
+[dependencies]
+async-trait = "=0.1.88"
+base64 = "=0.22.1"
+macros = { git = "https://github.com/breez/boltz-client", rev = "809ac77cfc9ab2d809e3ef05f31c6d23ee9c4730" }
+reqwest = { version = "=0.12.23", default-features = false, features = ["json", "http2", "charset", "system-proxy", "rustls-tls"] }
+serde = "=1.0.228"
+serde_json = "=1.0.150"
+thiserror = "=2.0.12"
+tokio = { version = "=1.45.1", default-features = false }
+tracing = "=0.1.44"
+
+# WASM dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+web-time = { version = "=1.1.0", features = ["serde"] }
+tokio_with_wasm = { version = "=0.8.8", features = [
+  "macros",
+  "rt",
+  "sync",
+  "time",
+] }

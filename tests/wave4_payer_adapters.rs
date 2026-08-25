@@ -9,8 +9,8 @@ use paygate::error::DomainError;
 use paygate::orchestrator::{RealPayerFactory, UntrustedPaymentChallenge, submit_payment};
 use paygate::payers::SyntheticPaymentChallenge;
 use paygate::payers::base::{
-    CancellationSemantics, PaymentError, RawPaymentResult, RealPayer, SubmissionOutcome,
-    ValidatedBolt11, verify_payment_result,
+    CancellationSemantics, PaymentAttemptOutcome, PaymentError, PostSubmitCondition,
+    RawPaymentResult, RealPayer, SubmissionOutcome, ValidatedBolt11, verify_payment_result,
 };
 use paygate::payers::breez::{
     BreezSparkPayer, BreezSparkSdk, BreezStorage, PreparedPayment, SparkPaymentResult,
@@ -63,11 +63,13 @@ async fn lnd_uses_fee_bound_request_without_redirects_and_requires_terminal_resu
         ],
     };
     let payer = LndRestPayer::new(fake);
+    let outcome = payer
+        .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
+        .await;
+    assert!(matches!(outcome, PaymentAttemptOutcome::Confirmed { .. }));
     assert_eq!(
-        payer
-            .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
-            .await,
-        Err(PaymentError::FeeExceeded)
+        outcome.post_submit_conditions(),
+        &[PostSubmitCondition::FinalFeeExceeded]
     );
     let request = payer.transport().request.lock().unwrap().clone().unwrap();
     assert!(!request.follow_redirects);
@@ -80,9 +82,11 @@ async fn lnd_ambiguous_cancellation_never_touches_transport() {
     let payer = LndRestPayer::new(FakeLnd::default());
     let result = payer
         .pay(&invoice, 1, CancellationSemantics::AfterSubmissionUnknown)
-        .await
-        .unwrap();
-    assert_eq!(result.outcome, SubmissionOutcome::SubmittedUnknown);
+        .await;
+    assert_eq!(
+        result,
+        PaymentAttemptOutcome::SubmittedUnknown(PaymentError::AmbiguousSubmission)
+    );
     assert!(payer.transport().request.lock().unwrap().is_none());
 }
 
@@ -101,7 +105,7 @@ async fn lnd_rejects_malformed_and_nonterminal_streams_without_network() {
             payer
                 .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
                 .await,
-            Err(expected)
+            PaymentAttemptOutcome::SubmittedUnknown(expected)
         );
     }
 }
@@ -118,11 +122,10 @@ async fn lnd_successful_terminal_response_still_requires_invoice_bound_proof() {
             preimage_hex: "00".repeat(32),
         }],
     });
-    let raw = payer
+    let outcome = payer
         .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
-        .await
-        .unwrap();
-    assert_eq!(raw.outcome, SubmissionOutcome::Succeeded);
+        .await;
+    let raw = outcome.confirmed_raw().unwrap().clone();
     assert_eq!(
         verify_payment_result(&invoice, raw),
         Err(PaymentError::ProofMismatch)
@@ -137,18 +140,24 @@ struct FakeSpark {
 }
 #[async_trait]
 impl BreezSparkSdk for FakeSpark {
+    type Prepared = String;
+
     async fn check_ready(&self) -> Result<(), PaymentError> {
         self.calls.lock().unwrap().push("ready");
         Ok(())
     }
-    async fn prepare_bolt11(&self, _: &str) -> Result<PreparedPayment, PaymentError> {
+    async fn prepare_bolt11(
+        &self,
+        _: &str,
+    ) -> Result<PreparedPayment<Self::Prepared>, PaymentError> {
         self.calls.lock().unwrap().push("prepare");
-        Ok(PreparedPayment {
-            id: "p".into(),
-            fee_sats: self.fee,
-        })
+        Ok(PreparedPayment::new(self.fee, "p".into()))
     }
-    async fn send_prepared(&self, _: &PreparedPayment) -> Result<SparkPaymentResult, PaymentError> {
+    async fn send_prepared(
+        &self,
+        prepared: Self::Prepared,
+    ) -> Result<SparkPaymentResult, PaymentError> {
+        assert_eq!(prepared, "p");
         self.calls.lock().unwrap().push("send");
         Ok(self.result.clone().unwrap_or(SparkPaymentResult {
             amount_sats: 2_500_000,
@@ -184,12 +193,14 @@ async fn breez_claims_storage_and_enforces_prepared_fee_before_send() {
         storage,
     );
     let invoice = ValidatedBolt11::parse(INVOICE).unwrap();
+    payer.check_ready().await.unwrap();
     assert_eq!(
         payer
             .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
             .await,
-        Err(PaymentError::FeeExceeded)
+        PaymentAttemptOutcome::NotSubmitted(PaymentError::FeeExceeded)
     );
+    payer.disconnect().await.unwrap();
     assert_eq!(
         *calls.lock().unwrap(),
         vec!["ready", "prepare", "disconnect"]
@@ -214,12 +225,14 @@ async fn breez_failed_disconnect_keeps_storage_claim_until_a_successful_retry() 
         storage,
     );
     let invoice = ValidatedBolt11::parse(INVOICE).unwrap();
+    payer.check_ready().await.unwrap();
     assert_eq!(
         payer
             .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
             .await,
-        Err(PaymentError::Transport)
+        PaymentAttemptOutcome::SubmittedFailedFinal(PaymentError::Transport)
     );
+    assert_eq!(payer.disconnect().await, Err(PaymentError::Transport));
     assert_eq!(
         *calls.lock().unwrap(),
         vec!["ready", "prepare", "send", "disconnect"]
@@ -249,12 +262,14 @@ async fn breez_successful_disconnect_retry_releases_storage_claim() {
         storage,
     );
     let invoice = ValidatedBolt11::parse(INVOICE).unwrap();
+    payer.check_ready().await.unwrap();
     assert_eq!(
         payer
             .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
             .await,
-        Err(PaymentError::Transport)
+        PaymentAttemptOutcome::SubmittedFailedFinal(PaymentError::Transport)
     );
+    assert_eq!(payer.disconnect().await, Err(PaymentError::Transport));
     assert!(BreezStorage::acquire(&path).is_err());
     disconnect_error.store(false, Ordering::Release);
     payer.disconnect().await.unwrap();
@@ -281,6 +296,74 @@ fn matching_invoice() -> (ValidatedBolt11, String) {
         ValidatedBolt11::parse(invoice.to_string()).unwrap(),
         hex::encode(preimage),
     )
+}
+
+#[tokio::test]
+async fn breez_completed_proof_is_confirmed_only_after_common_verification() {
+    let (invoice, valid_preimage) = matching_invoice();
+    let wrong_preimage = hex::encode([8_u8; 32]);
+    let wrong_hash = hex::encode(sha256::Hash::hash(&[8_u8; 32]));
+    let cases = [
+        ("missing", None, None, false),
+        (
+            "malformed",
+            Some("not-hex".into()),
+            Some(valid_preimage.clone()),
+            false,
+        ),
+        (
+            "hash-mismatch",
+            Some(wrong_hash),
+            Some(wrong_preimage.clone()),
+            false,
+        ),
+        (
+            "preimage-mismatch",
+            Some(hex::encode(invoice.payment_hash())),
+            Some(wrong_preimage),
+            false,
+        ),
+        (
+            "valid",
+            Some(hex::encode(invoice.payment_hash())),
+            Some(valid_preimage),
+            true,
+        ),
+    ];
+    for (name, payment_hash, preimage_hex, valid) in cases {
+        let path =
+            std::env::temp_dir().join(format!("paygate-wave4-proof-{}-{name}", std::process::id()));
+        let payer = BreezSparkPayer::new(
+            FakeSpark {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                fee: 0,
+                disconnect_error: Arc::new(AtomicBool::new(false)),
+                result: Some(SparkPaymentResult {
+                    amount_sats: invoice.amount_sats(),
+                    fee_sats: 0,
+                    payment_hash,
+                    preimage_hex,
+                    outcome: SubmissionOutcome::Succeeded,
+                }),
+            },
+            BreezStorage::acquire(&path).unwrap(),
+        );
+        let outcome = payer
+            .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
+            .await;
+        if valid {
+            assert!(matches!(outcome, PaymentAttemptOutcome::Confirmed { .. }));
+        } else {
+            assert_eq!(
+                outcome,
+                PaymentAttemptOutcome::SubmittedUnknown(PaymentError::AmbiguousSubmission)
+            );
+            assert!(!outcome.retry_is_safe());
+            assert!(!outcome.authorization_eligible());
+        }
+        drop(payer);
+        let _ = std::fs::remove_dir(&path);
+    }
 }
 
 #[tokio::test]
@@ -329,7 +412,7 @@ async fn breez_fake_success_authorizes_only_with_invoice_bound_proof() {
     assert!(authorization.unwrap().starts_with("L402 token:"));
     assert_eq!(
         *calls.lock().unwrap(),
-        vec!["ready", "ready", "prepare", "send", "disconnect"]
+        vec!["ready", "prepare", "send", "disconnect"]
     );
     assert!(BreezStorage::acquire(&path).is_ok());
     let _ = std::fs::remove_dir(&path);
@@ -349,14 +432,13 @@ impl RealPayer for CleanupPayer {
         invoice: &ValidatedBolt11,
         _: u64,
         _: CancellationSemantics,
-    ) -> Result<RawPaymentResult, PaymentError> {
+    ) -> PaymentAttemptOutcome {
         self.0.lock().unwrap().push("send");
-        Ok(RawPaymentResult {
+        PaymentAttemptOutcome::confirmed(RawPaymentResult {
             amount_sats: invoice.amount_sats(),
             fee_sats: 0,
             payment_hash: Some(hex::encode(invoice.payment_hash())),
             preimage_hex: Some("00".repeat(32)),
-            outcome: SubmissionOutcome::Succeeded,
         })
     }
 
@@ -394,6 +476,72 @@ async fn submit_payment_disconnects_after_proof_verification_failure() {
     assert_eq!(*calls.lock().unwrap(), vec!["ready", "send", "disconnect"]);
 }
 
+struct UnknownCleanupPayer {
+    calls: Arc<Mutex<Vec<&'static str>>>,
+    ownership_retained: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl RealPayer for UnknownCleanupPayer {
+    async fn check_ready(&self) -> Result<(), PaymentError> {
+        self.calls.lock().unwrap().push("ready");
+        Ok(())
+    }
+
+    async fn pay(
+        &self,
+        _: &ValidatedBolt11,
+        _: u64,
+        _: CancellationSemantics,
+    ) -> PaymentAttemptOutcome {
+        self.calls.lock().unwrap().push("send");
+        PaymentAttemptOutcome::SubmittedUnknown(PaymentError::Timeout)
+    }
+
+    async fn disconnect(&self) -> Result<(), PaymentError> {
+        self.calls.lock().unwrap().push("disconnect");
+        self.ownership_retained.store(true, Ordering::Release);
+        Err(PaymentError::Transport)
+    }
+}
+
+#[tokio::test]
+async fn submitted_unknown_remains_ambiguous_when_disconnect_fails() {
+    let invoice = ValidatedBolt11::parse(INVOICE).unwrap();
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let retained = Arc::new(AtomicBool::new(false));
+    let made_calls = calls.clone();
+    let made_retained = retained.clone();
+    let result = submit_payment::<UnknownCleanupPayer, _>(
+        UntrustedPaymentChallenge {
+            invoice: invoice.original().to_owned(),
+            amount_sats: invoice.amount_sats(),
+            payment_hash: Some(hex::encode(invoice.payment_hash())),
+            service: Some("svc".into()),
+            request: "/resource".into(),
+        },
+        "paygate.test:443",
+        &PolicyConfig {
+            allowed_hosts: vec!["paygate.test:443".into()],
+            allowed_services: vec!["svc".into()],
+            max_request_sats: 3_000_000,
+            max_fee_sats: 1,
+        },
+        "token",
+        RealPayerFactory::new(true, move |_| {
+            Ok(UnknownCleanupPayer {
+                calls: made_calls,
+                ownership_retained: made_retained,
+            })
+        }),
+    )
+    .await;
+
+    assert_eq!(result, Err(DomainError::SubmissionUnknown));
+    assert_eq!(*calls.lock().unwrap(), vec!["ready", "send", "disconnect"]);
+    assert!(retained.load(Ordering::Acquire));
+}
+
 #[tokio::test]
 async fn phoenixd_never_becomes_a_submission_path() {
     let invoice = ValidatedBolt11::parse(INVOICE).unwrap();
@@ -403,7 +551,7 @@ async fn phoenixd_never_becomes_a_submission_path() {
         payer
             .pay(&invoice, 1, CancellationSemantics::BeforeSubmission)
             .await,
-        Err(PaymentError::Unsupported)
+        PaymentAttemptOutcome::NotSubmitted(PaymentError::Unsupported)
     );
 }
 

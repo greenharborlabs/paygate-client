@@ -9,6 +9,7 @@ from paygate_client.config import (
     UnknownBackendError,
     ValidationError,
     load_config,
+    load_config_env,
 )
 
 
@@ -403,3 +404,22 @@ export PAYGATE_CLIENT_LND_MACAROON_HEX="00aa"
     assert config.lnd is not None
     assert config.lnd.rest_url_env.env_var == "PAYGATE_CLIENT_LND_REST_URL"
     assert config.lnd.macaroon_hex_env.env_var == "PAYGATE_CLIENT_LND_MACAROON_HEX"
+
+
+def test_generic_companion_env_is_preferred_without_merging_legacy_values(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("payer: {}\n", encoding="utf-8")
+    (tmp_path / "paygate-env.sh").write_text(
+        'export SHARED="generic"\nexport GENERIC_ONLY="present"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "voltage-env.sh").write_text(
+        'export SHARED="legacy"\nexport LEGACY_ONLY="stale"\n',
+        encoding="utf-8",
+    )
+
+    loaded = load_config_env(config_path, env={"SHARED": "process"})
+
+    assert loaded["SHARED"] == "process"
+    assert loaded["GENERIC_ONLY"] == "present"
+    assert "LEGACY_ONLY" not in loaded

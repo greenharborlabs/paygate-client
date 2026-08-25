@@ -40,13 +40,10 @@ CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
 MISSING_LICENSE_EXCEPTIONS = (
     ("boltz-client", "0.1.0", BOLTZ_SOURCE),
     ("breez-sdk-common", "0.1.0", SPARK_SOURCE),
-    ("breez-sdk-spark", "0.1.0", SPARK_SOURCE),
     ("flashnet", "0.1.0", SPARK_SOURCE),
     ("lnurl-models", "0.1.0", SPARK_SOURCE),
     ("macros", "0.1.0", BOLTZ_SOURCE),
     ("macros", "0.1.0", SPARK_SOURCE),
-    ("platform-utils", "0.1.0", BOLTZ_SOURCE),
-    ("platform-utils", "0.1.0", SPARK_SOURCE),
     ("spark", "0.1.0", SPARK_SOURCE),
     ("spark-wallet", "0.1.0", SPARK_SOURCE),
     ("tokio-tungstenite-wasm", "0.8.2", CRATES_IO_SOURCE),

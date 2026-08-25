@@ -7,8 +7,8 @@
 use async_trait::async_trait;
 
 use super::base::{
-    CancellationSemantics, PaymentError, RawPaymentResult, RealPayer, SubmissionOutcome,
-    ValidatedBolt11,
+    CancellationSemantics, PaymentAttemptOutcome, PaymentError, PostSubmitCondition,
+    RawPaymentResult, RealPayer, ValidatedBolt11,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,21 +66,27 @@ impl<T: LndRestTransport> RealPayer for LndRestPayer<T> {
         invoice: &ValidatedBolt11,
         max_fee_sats: u64,
         cancellation: CancellationSemantics,
-    ) -> Result<RawPaymentResult, PaymentError> {
+    ) -> PaymentAttemptOutcome {
         // The caller uses this explicit value to report a cancellation. It is
         // never converted into a retry-safe final failure.
         if cancellation == CancellationSemantics::AfterSubmissionUnknown {
-            return Ok(unknown());
+            return PaymentAttemptOutcome::SubmittedUnknown(PaymentError::AmbiguousSubmission);
         }
-        let events = self
+        let events = match self
             .transport
             .stream_payment(LndPaymentRequest {
                 bolt11: invoice.original().to_owned(),
                 max_fee_sats,
                 follow_redirects: false,
             })
-            .await?;
-        let terminal = events.last().ok_or(PaymentError::MalformedResponse)?;
+            .await
+        {
+            Ok(events) => events,
+            Err(error) => return PaymentAttemptOutcome::SubmittedUnknown(error),
+        };
+        let Some(terminal) = events.last() else {
+            return PaymentAttemptOutcome::SubmittedUnknown(PaymentError::MalformedResponse);
+        };
         match terminal {
             LndPaymentEvent::Succeeded {
                 amount_sats,
@@ -89,39 +95,33 @@ impl<T: LndRestTransport> RealPayer for LndRestPayer<T> {
                 preimage_hex,
             } => {
                 if *fee_sats > max_fee_sats {
-                    return Err(PaymentError::FeeExceeded);
+                    let mut outcome = PaymentAttemptOutcome::confirmed(RawPaymentResult {
+                        amount_sats: *amount_sats,
+                        fee_sats: *fee_sats,
+                        payment_hash: Some(payment_hash.clone()),
+                        preimage_hex: Some(preimage_hex.clone()),
+                    });
+                    outcome.add_post_submit_condition(PostSubmitCondition::FinalFeeExceeded);
+                    return outcome;
                 }
-                Ok(RawPaymentResult {
+                PaymentAttemptOutcome::confirmed(RawPaymentResult {
                     amount_sats: *amount_sats,
                     fee_sats: *fee_sats,
                     payment_hash: Some(payment_hash.clone()),
                     preimage_hex: Some(preimage_hex.clone()),
-                    outcome: SubmissionOutcome::Succeeded,
                 })
             }
-            LndPaymentEvent::FailedFinal => Ok(RawPaymentResult {
-                amount_sats: invoice.amount_sats(),
-                fee_sats: 0,
-                payment_hash: None,
-                preimage_hex: None,
-                outcome: SubmissionOutcome::FailedFinal,
-            }),
-            LndPaymentEvent::InFlight => Err(PaymentError::Timeout),
+            LndPaymentEvent::FailedFinal => {
+                PaymentAttemptOutcome::SubmittedFailedFinal(PaymentError::Transport)
+            }
+            LndPaymentEvent::InFlight => {
+                PaymentAttemptOutcome::SubmittedUnknown(PaymentError::Timeout)
+            }
         }
     }
 
     async fn disconnect(&self) -> Result<(), PaymentError> {
         self.transport.disconnect().await
-    }
-}
-
-fn unknown() -> RawPaymentResult {
-    RawPaymentResult {
-        amount_sats: 0,
-        fee_sats: 0,
-        payment_hash: None,
-        preimage_hex: None,
-        outcome: SubmissionOutcome::SubmittedUnknown,
     }
 }
 

@@ -79,6 +79,28 @@ fn record(id: &str, secret: &str) -> CredentialSecretRecord {
     }
 }
 
+struct NativeKeyringCleanup<S: CredentialSecretStore> {
+    store: S,
+    entries: Vec<(&'static str, String)>,
+}
+
+impl<S: CredentialSecretStore> NativeKeyringCleanup<S> {
+    fn new(store: S, entries: Vec<(&'static str, String)>) -> Self {
+        Self { store, entries }
+    }
+}
+
+impl<S: CredentialSecretStore> Drop for NativeKeyringCleanup<S> {
+    fn drop(&mut self) {
+        // Best effort is deliberate: cleanup must never replace the test's original panic.
+        for (namespace, credential_id) in &self.entries {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = self.store.delete(namespace, credential_id);
+            }));
+        }
+    }
+}
+
 #[test]
 #[cfg(unix)]
 fn schema_v1_fallback_interoperates_in_both_language_directions() {
@@ -156,6 +178,79 @@ impl CredentialSecretStore for ClassifiedStore {
 }
 
 #[test]
+fn native_keyring_cleanup_is_unwind_safe_and_best_effort() {
+    use std::cell::RefCell;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+    use std::rc::Rc;
+
+    struct RecordingStore(Rc<RefCell<Vec<(String, String)>>>);
+
+    impl CredentialSecretStore for RecordingStore {
+        fn get(&self, _: &str, _: &str) -> Result<Option<String>, SecretStoreError> {
+            unreachable!()
+        }
+
+        fn put(&self, _: &CredentialSecretRecord) -> Result<(), SecretStoreError> {
+            unreachable!()
+        }
+
+        fn delete(&self, namespace: &str, credential_id: &str) -> Result<(), SecretStoreError> {
+            self.0
+                .borrow_mut()
+                .push((namespace.to_owned(), credential_id.to_owned()));
+            if credential_id == "py-unique" {
+                panic!("simulated cleanup panic");
+            }
+            Err(SecretStoreError::Storage)
+        }
+    }
+
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    {
+        let _cleanup = NativeKeyringCleanup::new(
+            RecordingStore(Rc::clone(&calls)),
+            vec![("qualification", "normal-unique".to_owned())],
+        );
+    }
+    assert_eq!(
+        calls.borrow().as_slice(),
+        [("qualification".to_owned(), "normal-unique".to_owned())]
+    );
+    calls.borrow_mut().clear();
+
+    let failure = catch_unwind(AssertUnwindSafe({
+        let calls = Rc::clone(&calls);
+        move || {
+            let _cleanup = NativeKeyringCleanup::new(
+                RecordingStore(calls),
+                vec![
+                    ("qualification", "py-unique".to_owned()),
+                    ("qualification", "rust-unique".to_owned()),
+                    ("default", "legacy-unique".to_owned()),
+                ],
+            );
+            panic!("original qualification failure");
+        }
+    }));
+
+    let failure = failure.expect_err("the original qualification panic must propagate");
+    assert_eq!(
+        *failure
+            .downcast::<&'static str>()
+            .expect("original panic payload"),
+        "original qualification failure"
+    );
+    assert_eq!(
+        calls.borrow().as_slice(),
+        [
+            ("qualification".to_owned(), "py-unique".to_owned()),
+            ("qualification".to_owned(), "rust-unique".to_owned()),
+            ("default".to_owned(), "legacy-unique".to_owned()),
+        ]
+    );
+}
+
+#[test]
 fn coordinator_falls_back_only_for_classified_unavailability() {
     let unavailable = FallbackCoordinator {
         primary: ClassifiedStore(Err(SecretStoreError::BackendUnavailable)),
@@ -212,6 +307,14 @@ fn os_keyring_has_independent_bidirectional_and_legacy_probes() {
     let rust_id = format!("rust-{suffix}");
     let legacy_id = format!("legacy-{suffix}");
     let store = OsKeyringStore;
+    let _cleanup = NativeKeyringCleanup::new(
+        store,
+        vec![
+            ("qualification", py_id.clone()),
+            ("qualification", rust_id.clone()),
+            ("default", legacy_id.clone()),
+        ],
+    );
 
     let python_path = std::env::var("PAYGATE_QUALIFICATION_PYTHON").expect(
         "PAYGATE_QUALIFICATION_PYTHON must select Python with the reviewed keyring backend",
@@ -222,7 +325,7 @@ fn os_keyring_has_independent_bidirectional_and_legacy_probes() {
     );
     let preflight = Command::new(&python_path)
         .arg("-c")
-        .arg("import keyring,sys; assert keyring.__version__ == '25.7.0'; n=(keyring.get_keyring().__class__.__module__+'.'+keyring.get_keyring().__class__.__name__).lower(); assert not any(x in n for x in ('null','file','chainer','fail')); assert ('secretservice' in n) if sys.platform.startswith('linux') else ('macos' in n or 'keychain' in n)")
+        .arg(r#"import importlib.metadata,keyring,sys; assert importlib.metadata.version("keyring") == '25.7.0'; n=(keyring.get_keyring().__class__.__module__+'.'+keyring.get_keyring().__class__.__name__).lower(); assert not any(x in n for x in ('null','file','chainer','fail')); assert ('secretservice' in n) if sys.platform.startswith('linux') else ('macos' in n or 'keychain' in n)"#)
         .status().expect("verify controlled native keyring");
     assert!(
         preflight.success(),

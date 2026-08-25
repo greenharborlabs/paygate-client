@@ -23,6 +23,9 @@ jobs:
     name: Rust Wave 2 development gate
     runs-on: ubuntu-22.04
     timeout-minutes: 25
+    env:
+      PROTOC: ${{ github.workspace }}/scripts/protoc-ci-wrapper.sh
+      PROTOC_INCLUDE: /usr/include
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -31,6 +34,13 @@ jobs:
         run: >-
           rustup toolchain install 1.88.0 --profile minimal
           --component rustfmt --component clippy
+      - name: Install protobuf compiler
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends protobuf-compiler libprotobuf-dev
+          protoc --version
+          test -f "$PROTOC_INCLUDE/google/protobuf/timestamp.proto"
       - name: Prime locked Rust dependency cache
         run: cargo +1.88.0 fetch --locked
       - name: Run the balanced Wave 2 development gate

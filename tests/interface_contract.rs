@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use paygate::payers::base::{
-    CancellationSemantics, PaymentError, RawPaymentResult, RealPayer, SubmissionOutcome,
-    SyntheticPaymentChallenge, ValidatedBolt11, VerifiedPaymentResult, verify_payment_result,
+    CancellationSemantics, PaymentAttemptOutcome, PaymentError, PostSubmitCondition,
+    RawPaymentResult, RealPayer, SubmissionOutcome, SyntheticPaymentChallenge, ValidatedBolt11,
+    VerifiedPaymentResult, verify_payment_result,
 };
 use paygate::payers::{PayerAdapter, PayerRegistryInput};
 
@@ -20,8 +21,8 @@ impl RealPayer for ContractPayer {
         _invoice: &ValidatedBolt11,
         _max_fee_sats: u64,
         _cancellation: CancellationSemantics,
-    ) -> Result<RawPaymentResult, PaymentError> {
-        Err(PaymentError::NotImplemented)
+    ) -> PaymentAttemptOutcome {
+        PaymentAttemptOutcome::NotSubmitted(PaymentError::NotImplemented)
     }
 
     async fn disconnect(&self) -> Result<(), PaymentError> {
@@ -51,7 +52,6 @@ fn shared_interfaces_are_implementable_without_functional_payment() {
         fee_sats: 1,
         payment_hash: Some("00".repeat(32)),
         preimage_hex: Some("11".repeat(32)),
-        outcome: SubmissionOutcome::FailedFinal,
     };
     let verify: fn(
         &ValidatedBolt11,
@@ -63,10 +63,18 @@ fn shared_interfaces_are_implementable_without_functional_payment() {
 #[test]
 fn submission_outcomes_are_exhaustive_and_cancellation_is_explicit() {
     let outcomes = [
-        SubmissionOutcome::NotSubmitted,
-        SubmissionOutcome::SubmittedUnknown,
-        SubmissionOutcome::Succeeded,
-        SubmissionOutcome::FailedFinal,
+        PaymentAttemptOutcome::NotSubmitted(PaymentError::NotImplemented),
+        PaymentAttemptOutcome::SubmittedFailedFinal(PaymentError::Transport),
+        PaymentAttemptOutcome::SubmittedUnknown(PaymentError::Timeout),
+        PaymentAttemptOutcome::Confirmed {
+            raw: RawPaymentResult {
+                amount_sats: 1,
+                fee_sats: 0,
+                payment_hash: None,
+                preimage_hex: None,
+            },
+            post_submit_conditions: vec![PostSubmitCondition::DisconnectFailed],
+        },
     ];
     assert_eq!(outcomes.len(), 4);
     assert_eq!(
@@ -87,4 +95,14 @@ fn verified_payment_result_exposes_only_read_only_accessor_contracts() {
         VerifiedPaymentResult::payment_hash;
     let _preimage: fn(&VerifiedPaymentResult) -> &[u8; 32] = VerifiedPaymentResult::preimage;
     let _outcome: fn(&VerifiedPaymentResult) -> SubmissionOutcome = VerifiedPaymentResult::outcome;
+}
+
+#[tokio::test]
+async fn async_dispatcher_runs_inside_an_existing_tokio_runtime() {
+    let code = paygate::cli::run_cli(paygate::cli::Cli {
+        command: None,
+        version: false,
+    })
+    .await;
+    assert_eq!(code, 0);
 }

@@ -164,7 +164,9 @@ def load_config_env(
 ) -> Mapping[str, str]:
     config_path = Path(path)
     base_env = os.environ if env is None else env
-    env_path = config_path.parent / "voltage-env.sh"
+    generic_env_path = config_path.parent / "paygate-env.sh"
+    legacy_env_path = config_path.parent / "voltage-env.sh"
+    env_path = generic_env_path if generic_env_path.exists() else legacy_env_path
     if not env_path.exists():
         return base_env
 

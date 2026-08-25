@@ -4,10 +4,6 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::config::{expand_path, load_config};
-use crate::state::cache::FileCredentialCache;
-use crate::state::ledger::DailySpendLedger;
-
 pub const DEFAULT_CONFIG_PATH: &str = "~/.config/paygate-client/config.yaml";
 #[derive(Debug, Parser)]
 #[command(name = "paygate", about = "Paygate command-line client")]
@@ -111,17 +107,21 @@ pub enum CredentialsCommand {
 
 /// Safe Wave-3 CLI dispatcher.  It owns parsing-adjacent validation and state
 /// setup, but intentionally does not perform HTTP or payment execution.
-pub fn run_cli(cli: Cli) -> i32 {
+pub async fn run_cli(cli: Cli) -> i32 {
     let result = match cli.command {
-        Some(Command::Request(args)) => run_request(args),
-        Some(Command::Backend { command }) => run_backend(command),
-        Some(Command::Credentials { command }) => run_credentials(command),
+        Some(Command::Request(args)) => crate::commands::request::run(args).await,
+        Some(Command::Backend { command }) => crate::commands::backend::run(command).await,
+        Some(Command::Credentials { command }) => crate::commands::credentials::run(command).await,
         None => return 0,
     };
     match result {
         Ok(value) => {
             println!("{value}");
-            0
+            if value.get("ok").and_then(serde_json::Value::as_bool) == Some(false) {
+                1
+            } else {
+                0
+            }
         }
         Err((code, message)) => {
             // All messages are fixed classifications; never echo command args,
@@ -133,135 +133,6 @@ pub fn run_cli(cli: Cli) -> i32 {
             1
         }
     }
-}
-
-fn run_request(args: RequestArgs) -> Result<serde_json::Value, (&'static str, &'static str)> {
-    parse_headers(&args.headers).map_err(|_| ("invalid_request", "invalid request input"))?;
-    if args.method.trim().is_empty()
-        || !args.url.starts_with("http://") && !args.url.starts_with("https://")
-        || args.timeout.is_some_and(|v| !v.is_finite() || v <= 0.0)
-    {
-        return Err(("invalid_request", "invalid request input"));
-    }
-    let namespace = crate::state::normalize_namespace(Some(&args.profile))
-        .map_err(|_| ("invalid_request", "invalid profile"))?;
-    let config_path = expand_path(&args.config);
-    load_config(&config_path).map_err(config_error)?;
-    if !args.no_cache {
-        let path = args.cache_path.map(expand_path).unwrap_or_else(|| {
-            FileCredentialCache::default_path(Some(&namespace)).expect("validated namespace")
-        });
-        let cache = FileCredentialCache::new(path, Some(&namespace))
-            .map_err(|_| ("state_unavailable", "credential state is unavailable"))?;
-        cache
-            .list()
-            .map_err(|_| ("state_unavailable", "credential state is unavailable"))?;
-    }
-    let ledger_path = args.ledger_path.map(expand_path).unwrap_or_else(|| {
-        DailySpendLedger::default_path(Some(&namespace)).expect("validated namespace")
-    });
-    let ledger = DailySpendLedger::new(ledger_path);
-    ledger
-        .spent_today()
-        .map_err(|_| ("state_unavailable", "spend state is unavailable"))?;
-    Err((
-        "execution_unavailable",
-        "validated execution requires the payment runtime",
-    ))
-}
-fn run_backend(command: BackendCommand) -> Result<serde_json::Value, (&'static str, &'static str)> {
-    let config = match &command {
-        BackendCommand::Doctor { config, .. } | BackendCommand::PayInvoice { config, .. } => config,
-    };
-    let loaded = load_config(expand_path(config)).map_err(config_error)?;
-    match command {
-        BackendCommand::Doctor { .. } if loaded.payer.backend == "test-mode" => Ok(
-            json!({"ok": true, "backend": "test-mode", "capabilities": {"maxFeeLimitSupported": true}}),
-        ),
-        BackendCommand::Doctor { .. } => Err((
-            "backend_unavailable",
-            "selected backend execution is unavailable",
-        )),
-        BackendCommand::PayInvoice {
-            invoice,
-            max_fee_sats,
-            ..
-        } => {
-            if invoice.trim().is_empty() || max_fee_sats == Some(0) {
-                return Err(("invalid_request", "invalid payment input"));
-            }
-            Err((
-                "execution_unavailable",
-                "validated payment execution requires the payment runtime",
-            ))
-        }
-    }
-}
-fn run_credentials(
-    command: CredentialsCommand,
-) -> Result<serde_json::Value, (&'static str, &'static str)> {
-    let (profile, path) = match &command {
-        CredentialsCommand::List {
-            profile,
-            cache_path,
-        }
-        | CredentialsCommand::Show {
-            profile,
-            cache_path,
-            ..
-        }
-        | CredentialsCommand::Purge {
-            profile,
-            cache_path,
-            ..
-        } => (profile, cache_path),
-    };
-    let namespace = crate::state::normalize_namespace(Some(profile))
-        .map_err(|_| ("invalid_request", "invalid profile"))?;
-    let path = path.as_ref().map(expand_path).unwrap_or_else(|| {
-        FileCredentialCache::default_path(Some(&namespace)).expect("validated namespace")
-    });
-    let cache = FileCredentialCache::new(path, Some(&namespace))
-        .map_err(|_| ("state_unavailable", "credential state is unavailable"))?;
-    let credentials = cache
-        .list()
-        .map_err(|_| ("state_unavailable", "credential state is unavailable"))?;
-    match command {
-        CredentialsCommand::List { .. } => Ok(
-            json!({"ok": true, "credentials": credentials.into_iter().map(redacted_credential).collect::<Vec<_>>() }),
-        ),
-        CredentialsCommand::Show { credential_id, .. } => credentials
-            .into_iter()
-            .find(|c| c.credential_id == credential_id)
-            .map(redacted_credential)
-            .map(|c| json!({"ok": true, "credential": c}))
-            .ok_or(("credential_not_found", "credential was not found")),
-        CredentialsCommand::Purge { .. } => Err((
-            "execution_unavailable",
-            "credential deletion requires the payment runtime",
-        )),
-    }
-}
-fn redacted_credential(c: crate::state::cache::CachedCredential) -> serde_json::Value {
-    // This is a public CLI contract, deliberately kept in lock-step with the
-    // Python CachedCredential.redacted() shape.  Storage implementation
-    // details are not part of that contract.
-    json!({
-        "id": c.credential_id,
-        "scope": c.scope,
-        "authorization": "[REDACTED_CREDENTIAL]",
-        "createdAt": c.created_at,
-        "expiresAt": c.expires_at,
-        "maxUses": c.max_uses,
-        "useCount": c.use_count,
-        "lastSuccessAt": c.last_success_at,
-        "lastRejectedAt": c.last_rejected_at,
-        "paymentHash": c.payment_hash,
-        "challengeId": c.challenge_id,
-    })
-}
-fn config_error(_: crate::config::ConfigError) -> (&'static str, &'static str) {
-    ("config_invalid", "configuration is invalid or unavailable")
 }
 pub fn parse_headers(headers: &[String]) -> Result<BTreeMap<String, String>, &'static str> {
     let mut out = BTreeMap::new();

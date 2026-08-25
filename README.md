@@ -1,10 +1,19 @@
 # paygate-client
 
-`paygate-client` is a Python CLI for calling HTTP services that require a
+`paygate-client` is a CLI for calling HTTP services that require a
 Paygate `402 Payment Required` challenge. It can parse Paygate MPP `Payment`
 challenges, optionally parse L402 challenges, enforce local spend policy, pay a
 BOLT11 invoice through a configured payer backend, and retry the request with a
 payment credential.
+
+The repository now contains the controlled tooling for the minimal Rust
+deployment cutover. Operators must start with the immutable Wave 1 preflight
+record and follow the fixture/oracle, Rust-product-test, doctor, separately
+approved invoice and protected-request, install, restart/cache, rollback, and
+finalization gates in the
+[minimal Rust cutover runbook](docs/minimal-rust-cutover-runbook.md). The
+cutover scripts never treat a passing test as payment approval and never run a
+payment during rollback.
 
 ## Install
 
@@ -43,7 +52,7 @@ scripts/setup-voltage-paygate.sh
 The wizard prompts for the Voltage REST URL, macaroon hex, optional TLS cert
 path, allowlist entries, and spend caps. It writes the Paygate config to
 `~/.config/paygate-client/config.yaml` and stores secrets only in
-`~/.config/paygate-client/voltage-env.sh`.
+`~/.config/paygate-client/paygate-env.sh`.
 
 ## Breez Preimage Doctor
 
@@ -524,6 +533,11 @@ export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
 paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
 ```
 
+For restart-persistent local operation, put those two `export` lines in the
+owner-only `~/.config/paygate-client/paygate-env.sh` companion file and set its
+mode to `0600`. Process environment values override the companion file. The
+legacy `voltage-env.sh` filename is read only when `paygate-env.sh` is absent.
+
 The Breez backend checks the prepared `lightning_fee_sats` before submitting the
 payment, sends with `prefer_spark=false`, and refuses success unless the returned
 preimage verifies against the payment hash.
@@ -661,9 +675,11 @@ cap, or daily budget.
 `PAYGATE_CLIENT_LND_TLS_CERT_PATH`, or
 `PAYGATE_CLIENT_PHOENIXD_PASSWORD`. If you used
 `scripts/setup-voltage-paygate.sh`, make sure
-`~/.config/paygate-client/voltage-env.sh` exists next to
-`~/.config/paygate-client/config.yaml`; the CLI loads that companion file
-automatically.
+`~/.config/paygate-client/paygate-env.sh` exists next to
+`~/.config/paygate-client/config.yaml`; the CLI loads that generic companion
+file automatically. Existing installations that only have `voltage-env.sh`
+continue to use it as a legacy fallback. When `paygate-env.sh` exists, the two
+files are not merged, and process environment values retain precedence.
 
 `credentialCache.hit: true`: the request succeeded with a cached payment
 credential and did not pay a new invoice.
@@ -678,7 +694,23 @@ metadata was insufficient to enforce policy before payment.
 
 ## Development
 
+Native Rust builds require Rust 1.88.0 (selected by `rust-toolchain.toml`) and
+the Protocol Buffer compiler used by the Breez/Spark build scripts. For example,
+install `protoc` with `brew install protobuf` on macOS or
+`sudo apt-get install protobuf-compiler` on Ubuntu/Debian, then run:
+
 ```bash
+protoc --version
+cargo fetch --locked
+cargo check --locked --lib
+cargo test --locked
+```
+
+The Python compatibility oracle and legacy client checks use the editable
+development install:
+
+```bash
+python3 -m pip install -e ".[dev]"
 python3 -m pytest tests/test_config.py
 paygate --help
 paygate request --help

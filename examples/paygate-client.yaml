@@ -39,6 +39,8 @@ protocol:
 #   python -m pip install "paygate-client[breez] @ git+https://github.com/greenharborlabs/paygate-client.git@e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
 #   export BREEZ_API_KEY="replace-with-breez-api-key"
 #   export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
+# For restart-persistent local operation, store those exports in the owner-only
+# ~/.config/paygate-client/paygate-env.sh companion file with mode 0600.
 #
 # breez:
 #   api_key_env: "BREEZ_API_KEY"

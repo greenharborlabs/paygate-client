@@ -170,7 +170,13 @@ class DailySpendLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with self._lock_path.open("a+", encoding="utf-8") as lock_file:
+            lock_fd = os.open(
+                self._lock_path,
+                os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            os.fchmod(lock_fd, 0o600)
+            with os.fdopen(lock_fd, "a+", encoding="utf-8") as lock_file:
                 try:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
                 except OSError as exc:
@@ -212,7 +218,13 @@ class DailySpendLedger:
     def _write_state(self, state: dict[str, object]) -> None:
         tmp_path = self.path.with_name(f".{self.path.name}.{uuid4().hex}.tmp")
         try:
-            with tmp_path.open("w", encoding="utf-8") as ledger_file:
+            ledger_fd = os.open(
+                tmp_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            os.fchmod(ledger_fd, 0o600)
+            with os.fdopen(ledger_fd, "w", encoding="utf-8") as ledger_file:
                 json.dump(state, ledger_file, sort_keys=True)
                 ledger_file.write("\n")
                 ledger_file.flush()

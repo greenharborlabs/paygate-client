@@ -1,7 +1,7 @@
 //! Phoenixd is intentionally unsupported in this release.
 
 use super::base::{
-    CancellationSemantics, PaymentError, RawPaymentResult, RealPayer, ValidatedBolt11,
+    CancellationSemantics, PaymentAttemptOutcome, PaymentError, RealPayer, ValidatedBolt11,
 };
 use async_trait::async_trait;
 
@@ -19,8 +19,8 @@ impl RealPayer for PhoenixdPayer {
         _invoice: &ValidatedBolt11,
         _max_fee_sats: u64,
         _cancellation: CancellationSemantics,
-    ) -> Result<RawPaymentResult, PaymentError> {
-        Err(PaymentError::Unsupported)
+    ) -> PaymentAttemptOutcome {
+        PaymentAttemptOutcome::NotSubmitted(PaymentError::Unsupported)
     }
     async fn disconnect(&self) -> Result<(), PaymentError> {
         Ok(())

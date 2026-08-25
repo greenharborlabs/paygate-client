@@ -7,8 +7,9 @@ pub mod phoenixd;
 pub mod test_mode;
 
 pub use base::{
-    CancellationSemantics, PaymentError, RawPaymentResult, RealPayer, SubmissionOutcome,
-    SyntheticPaymentChallenge, ValidatedBolt11, VerifiedPaymentResult, verify_payment_result,
+    AttemptExitClass, CancellationSemantics, LedgerAction, PaymentAttemptOutcome, PaymentError,
+    PostSubmitCondition, RawPaymentResult, RealPayer, SubmissionOutcome, SyntheticPaymentChallenge,
+    ValidatedBolt11, VerifiedPaymentResult, verify_payment_result,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -203,7 +203,7 @@ impl CredentialSecretStore for Mode0600FallbackStore {
 
     fn delete(&self, namespace: &str, credential_id: &str) -> Result<(), SecretStoreError> {
         self.with_locked_file(false, |file| {
-            let file = file.ok_or(SecretStoreError::NotFound)?;
+            let Some(file) = file else { return Ok(()) };
             let mut root = read_schema(file)?;
             let entries = root
                 .get_mut("credentials")
@@ -213,7 +213,9 @@ impl CredentialSecretStore for Mode0600FallbackStore {
             if matches.len() > 1 {
                 return Err(SecretStoreError::Malformed);
             }
-            let index = matches.first().copied().ok_or(SecretStoreError::NotFound)?;
+            let Some(index) = matches.first().copied() else {
+                return Ok(());
+            };
             entries.remove(index);
             write_schema(file, &self.path, &root)
         })
@@ -249,10 +251,14 @@ impl<P: CredentialSecretStore, F: CredentialSecretStore> CredentialSecretStore
     }
     fn delete(&self, namespace: &str, credential_id: &str) -> Result<(), SecretStoreError> {
         match self.primary.delete(namespace, credential_id) {
-            Err(SecretStoreError::BackendUnavailable) => {
+            // Deletion intentionally covers both locations. A credential may
+            // have been written while the primary was unavailable and later
+            // purged after it recovered; leaving that fallback record behind
+            // would make the purge reversible by an environment change.
+            Ok(()) | Err(SecretStoreError::BackendUnavailable) => {
                 self.fallback.delete(namespace, credential_id)
             }
-            result => result,
+            Err(error) => Err(error),
         }
     }
 }

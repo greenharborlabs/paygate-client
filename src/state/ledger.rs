@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum LedgerError {
     #[error("ledger I/O failure")]
     Io,
@@ -21,6 +21,15 @@ pub enum LedgerError {
     BudgetExceeded,
     #[error("reservation is not pending")]
     ReservationState,
+    #[error("payment challenge already has retained counting state")]
+    DuplicatePayment,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LedgerMutationOutcome {
+    AppliedDurably,
+    AppliedWithDurabilityWarning,
+    NotApplied(LedgerError),
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Entry {
@@ -30,6 +39,14 @@ struct Entry {
 #[derive(Clone, Debug)]
 pub struct DailySpendLedger {
     pub path: PathBuf,
+    write_fault: std::sync::Arc<std::sync::atomic::AtomicU8>,
+}
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LedgerWriteFault {
+    None,
+    BeforeRename,
+    AfterRename,
 }
 #[derive(Clone, Debug)]
 pub struct LedgerReservation {
@@ -50,7 +67,14 @@ impl DailySpendLedger {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self {
             path: crate::config::expand_path(path.into()),
+            write_fault: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(
+                LedgerWriteFault::None as u8,
+            )),
         }
+    }
+    #[doc(hidden)]
+    pub fn set_write_fault_for_tests(&self, fault: LedgerWriteFault) {
+        self.write_fault.store(fault as u8, Ordering::SeqCst);
     }
     pub fn default_path(namespace: Option<&str>) -> Result<PathBuf, LedgerError> {
         let n = crate::state::normalize_namespace(namespace).map_err(|_| LedgerError::Read)?;
@@ -94,14 +118,69 @@ impl DailySpendLedger {
             state: ReservationState::Pending,
         })
     }
+
+    /// Reserve with a deterministic, non-secret challenge guard. A retained
+    /// reservation makes a restart fail closed instead of paying the same
+    /// challenge twice after an ambiguous submission or cache persistence
+    /// failure.
+    pub fn reserve_guarded(
+        &self,
+        amount_sats: u64,
+        daily_budget_sats: u64,
+        request_scope: &str,
+        payment_hash: &[u8; 32],
+    ) -> Result<LedgerReservation, LedgerError> {
+        use sha2::{Digest, Sha256};
+        let day = today();
+        let mut digest = Sha256::new();
+        digest.update(request_scope.as_bytes());
+        digest.update([0]);
+        digest.update(payment_hash);
+        let id = format!("guard-{}", hex::encode(digest.finalize()));
+        self.locked(|state| {
+            let entry = state.entry(day.clone()).or_insert_with(empty);
+            if entry.reservations.contains_key(&id) {
+                return Err(LedgerError::DuplicatePayment);
+            }
+            let total = entry
+                .committed_sats
+                .checked_add(reservation_total(entry)?)
+                .ok_or(LedgerError::Read)?;
+            if total.checked_add(amount_sats).ok_or(LedgerError::Read)? > daily_budget_sats {
+                return Err(LedgerError::BudgetExceeded);
+            }
+            entry.reservations.insert(id.clone(), amount_sats);
+            Ok(())
+        })?;
+        Ok(LedgerReservation {
+            ledger: self.clone(),
+            id,
+            day,
+            amount_sats,
+            state: ReservationState::Pending,
+        })
+    }
     pub fn spent_today(&self) -> Result<u64, LedgerError> {
         self.spent_on(&today())
+    }
+    /// Amount currently counting against today's limit, including fail-closed
+    /// reservations retained across restarts.
+    pub fn counting_today(&self) -> Result<u64, LedgerError> {
+        self.locked(|state| {
+            let Some(entry) = state.get(&today()) else {
+                return Ok(0);
+            };
+            entry
+                .committed_sats
+                .checked_add(reservation_total(entry)?)
+                .ok_or(LedgerError::Read)
+        })
     }
     pub fn spent_on(&self, day: &str) -> Result<u64, LedgerError> {
         self.locked(|s| Ok(s.get(day).map(|e| e.committed_sats).unwrap_or(0)))
     }
-    fn finish(&self, id: &str, day: &str, commit: bool) -> Result<(), LedgerError> {
-        self.locked(|s| {
+    fn finish_classified(&self, id: &str, day: &str, commit: bool) -> LedgerMutationOutcome {
+        self.locked_classified(|s| {
             let e = s.entry(day.into()).or_insert_with(empty);
             let v = e
                 .reservations
@@ -133,10 +212,54 @@ impl DailySpendLedger {
         let mut s = self.read()?;
         let r = f(&mut s);
         if r.is_ok() {
-            self.write(&s)?
+            match self.write_classified(&s) {
+                LedgerMutationOutcome::AppliedDurably
+                | LedgerMutationOutcome::AppliedWithDurabilityWarning => {}
+                LedgerMutationOutcome::NotApplied(error) => return Err(error),
+            }
         };
         let _ = FileExt::unlock(&file);
         r
+    }
+    fn locked_classified(
+        &self,
+        f: impl FnOnce(&mut BTreeMap<String, Entry>) -> Result<(), LedgerError>,
+    ) -> LedgerMutationOutcome {
+        let lock = self.path.with_extension(format!(
+            "{}lock",
+            self.path
+                .extension()
+                .and_then(|v| v.to_str())
+                .map(|v| format!("{v}."))
+                .unwrap_or_default()
+        ));
+        let Some(parent) = lock.parent() else {
+            return LedgerMutationOutcome::NotApplied(LedgerError::Io);
+        };
+        if fs::create_dir_all(parent).is_err() {
+            return LedgerMutationOutcome::NotApplied(LedgerError::Io);
+        }
+        let file = match safe_open(&lock, true) {
+            Ok(value) => value,
+            Err(error) => return LedgerMutationOutcome::NotApplied(error),
+        };
+        if FileExt::lock(&file).is_err() {
+            return LedgerMutationOutcome::NotApplied(LedgerError::Io);
+        }
+        let mut state = match self.read() {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = FileExt::unlock(&file);
+                return LedgerMutationOutcome::NotApplied(error);
+            }
+        };
+        if let Err(error) = f(&mut state) {
+            let _ = FileExt::unlock(&file);
+            return LedgerMutationOutcome::NotApplied(error);
+        }
+        let outcome = self.write_classified(&state);
+        let _ = FileExt::unlock(&file);
+        outcome
     }
     fn read(&self) -> Result<BTreeMap<String, Entry>, LedgerError> {
         // Read only through a descriptor validated after opening; a separate
@@ -158,11 +281,16 @@ impl DailySpendLedger {
         }
         Ok(s)
     }
-    fn write(&self, state: &BTreeMap<String, Entry>) -> Result<(), LedgerError> {
-        let mut bytes = serde_json::to_vec(state).map_err(|_| LedgerError::Read)?;
+    fn write_classified(&self, state: &BTreeMap<String, Entry>) -> LedgerMutationOutcome {
+        let mut bytes = match serde_json::to_vec(state) {
+            Ok(value) => value,
+            Err(_) => return LedgerMutationOutcome::NotApplied(LedgerError::Read),
+        };
         bytes.push(b'\n');
         let parent = self.path.parent().unwrap_or(Path::new("."));
-        fs::create_dir_all(parent).map_err(|_| LedgerError::Io)?;
+        if fs::create_dir_all(parent).is_err() {
+            return LedgerMutationOutcome::NotApplied(LedgerError::Io);
+        }
         let tmp = parent.join(format!(
             ".{}.{}.{}.tmp",
             self.path
@@ -175,7 +303,7 @@ impl DailySpendLedger {
                 .unwrap_or_default()
                 .as_nanos()
         ));
-        let write = (|| {
+        let before_rename = (|| {
             #[cfg(unix)]
             let mut f = OpenOptions::new()
                 .write(true)
@@ -192,19 +320,29 @@ impl DailySpendLedger {
             f.write_all(&bytes).map_err(|_| LedgerError::Io)?;
             f.sync_all().map_err(|_| LedgerError::Io)?;
             drop(f);
-            fs::rename(&tmp, &self.path).map_err(|_| LedgerError::Io)?;
-            std::fs::File::open(parent)
-                .and_then(|d| d.sync_all())
-                .map_err(|_| LedgerError::Io)
+            if self.write_fault.load(Ordering::SeqCst) == LedgerWriteFault::BeforeRename as u8 {
+                return Err(LedgerError::Io);
+            }
+            fs::rename(&tmp, &self.path).map_err(|_| LedgerError::Io)
         })();
-        if write.is_err() {
+        if let Err(error) = before_rename {
             let _ = fs::remove_file(&tmp);
+            return LedgerMutationOutcome::NotApplied(error);
         }
-        write?;
+        let mut warning =
+            self.write_fault.load(Ordering::SeqCst) == LedgerWriteFault::AfterRename as u8;
+        warning |= std::fs::File::open(parent)
+            .and_then(|d| d.sync_all())
+            .is_err();
         #[cfg(unix)]
-        fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))
-            .map_err(|_| LedgerError::Io)?;
-        Ok(())
+        {
+            warning |= fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600)).is_err();
+        }
+        if warning {
+            LedgerMutationOutcome::AppliedWithDurabilityWarning
+        } else {
+            LedgerMutationOutcome::AppliedDurably
+        }
     }
 }
 impl LedgerReservation {
@@ -212,23 +350,49 @@ impl LedgerReservation {
         &self.id
     }
     pub fn commit(&mut self) -> Result<(), LedgerError> {
+        match self.commit_classified() {
+            LedgerMutationOutcome::AppliedDurably
+            | LedgerMutationOutcome::AppliedWithDurabilityWarning => Ok(()),
+            LedgerMutationOutcome::NotApplied(error) => Err(error),
+        }
+    }
+    pub fn commit_classified(&mut self) -> LedgerMutationOutcome {
         if self.state == ReservationState::Committed {
-            return Ok(());
+            return LedgerMutationOutcome::AppliedDurably;
         }
         if self.state == ReservationState::RolledBack {
-            return Err(LedgerError::ReservationState);
+            return LedgerMutationOutcome::NotApplied(LedgerError::ReservationState);
         }
-        self.ledger.finish(&self.id, &self.day, true)?;
-        self.state = ReservationState::Committed;
-        Ok(())
+        let outcome = self.ledger.finish_classified(&self.id, &self.day, true);
+        if matches!(
+            outcome,
+            LedgerMutationOutcome::AppliedDurably
+                | LedgerMutationOutcome::AppliedWithDurabilityWarning
+        ) {
+            self.state = ReservationState::Committed;
+        }
+        outcome
     }
     pub fn rollback(&mut self) -> Result<(), LedgerError> {
-        if self.state == ReservationState::Committed || self.state == ReservationState::RolledBack {
-            return Ok(());
+        match self.rollback_classified() {
+            LedgerMutationOutcome::AppliedDurably
+            | LedgerMutationOutcome::AppliedWithDurabilityWarning => Ok(()),
+            LedgerMutationOutcome::NotApplied(error) => Err(error),
         }
-        self.ledger.finish(&self.id, &self.day, false)?;
-        self.state = ReservationState::RolledBack;
-        Ok(())
+    }
+    pub fn rollback_classified(&mut self) -> LedgerMutationOutcome {
+        if self.state == ReservationState::Committed || self.state == ReservationState::RolledBack {
+            return LedgerMutationOutcome::AppliedDurably;
+        }
+        let outcome = self.ledger.finish_classified(&self.id, &self.day, false);
+        if matches!(
+            outcome,
+            LedgerMutationOutcome::AppliedDurably
+                | LedgerMutationOutcome::AppliedWithDurabilityWarning
+        ) {
+            self.state = ReservationState::RolledBack;
+        }
+        outcome
     }
 }
 fn empty() -> Entry {
@@ -254,12 +418,12 @@ fn today() -> String {
         // The Python ledger uses local `date.today()`, rather than UTC.
         let mut out: libc::tm = unsafe { std::mem::zeroed() };
         unsafe { libc::localtime_r(&seconds, &mut out) };
-        return format!(
+        format!(
             "{:04}-{:02}-{:02}",
             out.tm_year + 1900,
             out.tm_mon + 1,
             out.tm_mday
-        );
+        )
     }
     #[cfg(not(unix))]
     {

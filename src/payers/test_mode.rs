@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::base::{PaymentError, RawPaymentResult, SubmissionOutcome, SyntheticPaymentChallenge};
+use super::base::{PaymentError, RawPaymentResult, SyntheticPaymentChallenge};
 
 /// A test-only payer. It intentionally does not implement `RealPayer`: that
 /// prevents a signed BOLT11 invoice from ever receiving synthetic proof data.
@@ -30,7 +30,6 @@ impl TestModePayer {
             fee_sats: 0,
             payment_hash: Some(hex::encode(payment_hash)),
             preimage_hex: Some(hex::encode(preimage)),
-            outcome: SubmissionOutcome::Succeeded,
         }
     }
 }

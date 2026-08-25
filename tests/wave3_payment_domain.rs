@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use paygate::error::DomainError;
 use paygate::orchestrator::{RealPayerFactory, UntrustedPaymentChallenge, submit_payment};
 use paygate::payers::base::{
-    CancellationSemantics, PaymentError, RawPaymentResult, RealPayer, SubmissionOutcome,
+    CancellationSemantics, PaymentAttemptOutcome, PaymentError, RawPaymentResult, RealPayer,
     ValidatedBolt11,
 };
 use paygate::policy::PolicyConfig;
@@ -52,10 +52,10 @@ impl RealPayer for FakePayer {
         _: &ValidatedBolt11,
         _: u64,
         cancellation: CancellationSemantics,
-    ) -> Result<RawPaymentResult, PaymentError> {
+    ) -> PaymentAttemptOutcome {
         assert_eq!(cancellation, CancellationSemantics::BeforeSubmission);
         self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(self.raw.clone())
+        PaymentAttemptOutcome::confirmed(self.raw.clone())
     }
     async fn disconnect(&self) -> Result<(), PaymentError> {
         Ok(())
@@ -112,7 +112,6 @@ fn impossible_raw() -> RawPaymentResult {
         fee_sats: 0,
         payment_hash: None,
         preimage_hex: None,
-        outcome: SubmissionOutcome::FailedFinal,
     }
 }
 
@@ -127,7 +126,6 @@ async fn valid_binding_rejects_proof_mismatch_after_payer_submission() {
         fee_sats: 1,
         payment_hash: Some(hex::encode(invoice.payment_hash())),
         preimage_hex: Some(hex::encode(preimage)),
-        outcome: SubmissionOutcome::Succeeded,
     };
     let calls = Arc::new(AtomicUsize::new(0));
     let seen = calls.clone();
