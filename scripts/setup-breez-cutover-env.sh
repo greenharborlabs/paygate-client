@@ -82,11 +82,19 @@ cleanup() {
 trap cleanup EXIT
 
 validate_destination() {
-  local destination=$1
+  local destination=$1 link_count
   [[ ! -L "$destination" ]] || { printf 'setup: refusing symlink: %s\n' "$destination" >&2; exit 1; }
   if [[ -e "$destination" ]]; then
     [[ -f "$destination" ]] || { printf 'setup: companion path is not a regular file: %s\n' "$destination" >&2; exit 1; }
-    [[ "$(stat -f '%l' "$destination")" == 1 ]] || { printf 'setup: companion file has multiple links: %s\n' "$destination" >&2; exit 1; }
+    if link_count=$(stat -f '%l' "$destination" 2>/dev/null); then
+      : # BSD/macOS stat
+    elif link_count=$(stat -c '%h' "$destination" 2>/dev/null); then
+      : # GNU/Linux stat
+    else
+      printf 'setup: could not inspect companion file links: %s\n' "$destination" >&2
+      exit 1
+    fi
+    [[ "$link_count" == 1 ]] || { printf 'setup: companion file has multiple links: %s\n' "$destination" >&2; exit 1; }
   fi
 }
 
