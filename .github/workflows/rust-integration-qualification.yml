@@ -21,6 +21,8 @@ jobs:
     if: ${{ inputs.enable_integration_qualification }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    env:
+      PROTOC_INCLUDE: /usr/include
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -35,6 +37,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends protobuf-compiler
           protoc --version
+          test -f "$PROTOC_INCLUDE/google/protobuf/timestamp.proto"
       - name: Prime a fresh locked Cargo home (network preparation only)
         env:
           QUALIFICATION_CARGO_HOME: ${{ runner.temp }}/paygate-cargo-home
