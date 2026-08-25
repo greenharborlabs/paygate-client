@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends protobuf-compiler
+          sudo apt-get install --yes --no-install-recommends protobuf-compiler libprotobuf-dev
           protoc --version
           test -f "$PROTOC_INCLUDE/google/protobuf/timestamp.proto"
       - name: Prime a fresh locked Cargo home (network preparation only)
