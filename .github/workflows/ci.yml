@@ -15,6 +15,7 @@ jobs:
     name: Python ${{ matrix.python-version }} tests and quality gates
     runs-on: ubuntu-latest
     env:
+      PROTOC: ${{ github.workspace }}/scripts/protoc-ci-wrapper.sh
       PROTOC_INCLUDE: /usr/include
     strategy:
       fail-fast: false
