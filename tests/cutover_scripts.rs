@@ -104,6 +104,41 @@ fn checkpoint(
     assert!(run(&mut command), "checkpoint {gate} failed");
 }
 
+struct FinalizeFixture<'a> {
+    script: &'a Path,
+    repo: &'a Path,
+    record: &'a Path,
+    candidate: &'a Path,
+    rollback: &'a Path,
+    acceptance: &'a Path,
+    recovery: &'a Path,
+    path: &'a str,
+}
+
+fn finalize(fixture: &FinalizeFixture<'_>, hook: Option<&str>) -> bool {
+    let mut command = Command::new(fixture.script);
+    command
+        .arg("finalize")
+        .args(["--repo"])
+        .arg(fixture.repo)
+        .args(["--record"])
+        .arg(fixture.record)
+        .args(["--candidate"])
+        .arg(fixture.candidate)
+        .args(["--rollback-dir"])
+        .arg(fixture.rollback)
+        .args(["--acceptance"])
+        .arg(fixture.acceptance)
+        .args(["--recovery-record"])
+        .arg(fixture.recovery)
+        .args(["--confirm", "FINALIZE_RUST_AND_RETAIN_QUARANTINE"])
+        .env("PATH", fixture.path);
+    if let Some(hook) = hook {
+        command.env("PAYGATE_CUTOVER_TEST_HOOK", hook);
+    }
+    run(&mut command)
+}
+
 fn replace_symlink(path: &Path, target: &Path) {
     fs::remove_file(path).unwrap();
     symlink(target, path).unwrap();
@@ -837,11 +872,13 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert!(install_ready.exists());
-    let output = Command::new(candidate.join("paygate")).output().unwrap();
+    assert!(runtime_marker.is_file());
+    let output = Command::new(&launcher).output().unwrap();
     assert_eq!(output.status.code(), Some(75));
     assert!(String::from_utf8_lossy(&output.stderr).contains("deployment maintenance is active"));
     fs::write(&install_release, "release\n").unwrap();
     assert!(install.wait().unwrap().success());
+    assert!(!runtime_marker.exists());
     let installed_target = fs::read_link(&launcher).unwrap();
     let stale_rollback = root.join("stale-reinstall-rollback");
     assert!(!run(Command::new(&cutover)
@@ -2086,32 +2123,88 @@ fn clean_room_cutover_is_identity_bound_fail_closed_and_reversible() {
         Some(&final_rollback),
         "runtime-only-pass",
     );
-    assert!(run(Command::new(&cutover)
-        .arg("finalize")
-        .args(["--repo"])
-        .arg(&repo)
+    let rollback_manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(final_rollback.join("manifest.json")).unwrap()).unwrap();
+    let retirement = final_rollback.parent().unwrap().join(format!(
+        ".{}.finalize-retired-{}",
+        final_rollback.file_name().unwrap().to_string_lossy(),
+        rollback_manifest["install_session_id"].as_str().unwrap()
+    ));
+    let unrelated_sibling = root.join("finalize-unrelated-sibling");
+    fs::write(&unrelated_sibling, "retain-me\n").unwrap();
+    let finalizer = FinalizeFixture {
+        script: &cutover,
+        repo: &repo,
+        record: &record,
+        candidate: &candidate,
+        rollback: &final_rollback,
+        acceptance: &final_acceptance,
+        recovery: &recovery,
+        path: &path,
+    };
+
+    assert!(!finalize(&finalizer, Some("after-finalize-marker")));
+    assert!(final_rollback.is_dir());
+    assert!(!recovery.exists());
+    assert!(runtime_marker.is_file());
+    let output = Command::new(&launcher).output().unwrap();
+    assert_eq!(output.status.code(), Some(75));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("deployment recovery is required"));
+    assert!(!run(Command::new(&cutover)
+        .arg("rollback")
         .args(["--record"])
         .arg(&record)
-        .args(["--candidate"])
-        .arg(&candidate)
         .args(["--rollback-dir"])
-        .arg(&final_rollback)
-        .args(["--acceptance"])
-        .arg(&final_acceptance)
-        .args(["--recovery-record"])
-        .arg(&recovery)
-        .args(["--confirm", "FINALIZE_RUST_AND_RETAIN_QUARANTINE"])
-        .env("PATH", &path)));
+        .arg(&final_rollback)));
+
+    assert!(!finalize(&finalizer, Some("after-finalize-recovery")));
+    assert!(final_rollback.is_dir());
+    assert!(recovery.is_file());
+    assert!(runtime_marker.is_file());
+
+    assert!(!finalize(&finalizer, Some("after-finalize-retirement")));
     assert!(!final_rollback.exists());
+    assert!(retirement.is_dir());
+    assert!(runtime_marker.is_file());
+
+    assert!(!finalize(&finalizer, Some("during-finalize-cleanup")));
+    assert!(retirement.is_dir());
+    assert!(!retirement.join("manifest.json").exists());
+    assert!(runtime_marker.is_file());
+
+    assert!(finalize(&finalizer, None));
+    assert!(!final_rollback.exists());
+    assert!(!retirement.exists());
+    assert!(!runtime_marker.exists());
+    assert!(finalize(&finalizer, None));
+    assert_eq!(
+        fs::read_to_string(&unrelated_sibling).unwrap(),
+        "retain-me\n"
+    );
     assert!(!old_target.exists());
     assert_eq!(fs::read(&base_python).unwrap(), base_python_bytes);
     let recovery_json: serde_json::Value =
         serde_json::from_slice(&fs::read(&recovery).unwrap()).unwrap();
     let candidate_json: serde_json::Value =
         serde_json::from_slice(&fs::read(candidate.join("manifest.json")).unwrap()).unwrap();
-    assert_eq!(recovery_json["schema"], "paygate-rust-recovery-boundary-v2");
+    assert_eq!(recovery_json["schema"], "paygate-rust-recovery-boundary-v3");
     assert_eq!(recovery_json["python_paygate_deactivated"], true);
     assert_eq!(recovery_json["python_environment_cleanup_required"], true);
+    assert_eq!(recovery_json["rollback_authority_retired"], true);
+    assert_eq!(
+        recovery_json["rollback_directory"].as_str(),
+        Some(
+            fs::canonicalize(final_rollback.parent().unwrap())
+                .unwrap()
+                .join(final_rollback.file_name().unwrap())
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+    assert_eq!(
+        fs::metadata(&recovery).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
     assert!(
         Path::new(
             recovery_json["python_environment_quarantine"]

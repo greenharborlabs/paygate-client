@@ -413,6 +413,14 @@ delete or edit the marker, restore parked Rust-era state, switch the launcher
 back to Rust, reset acceptance, or reuse cutover evidence. Reinstall requires a
 new acceptance file/session and all seven manual live approvals.
 
+Install publishes an owner-only `paygate-rust-install-recovery-v1` marker and
+atomically points the canonical launcher at the lock-aware Rust binary before
+the final process scan. This closes the post-scan Python-launch race: canonical
+invocations return maintenance exit 75 until install commits. A crash leaves
+the marker in place. Retain it and run the recorded rollback command; rollback
+validates the install journal and atomically replaces it with its restoration
+journal before changing live state.
+
 After successful restart/cache/runtime-only validation, and no later than 24
 hours after installation, explicitly cross the recovery boundary:
 
@@ -426,9 +434,19 @@ scripts/cutover-rust-paygate.sh finalize \
 
 Finalize reruns the W1 host/target/dirty guard and rechecks the installed Rust
 launcher, process table, quarantine identity, candidate identity, receipt, and
-every ordered checkpoint. It removes only the script-created rollback metadata
-and state backups, never the old environment bytes. The recovery record states
-that Python paygate is deactivated, records the original and quarantine paths,
-and explicitly marks external cleanup as required. The quarantine remains for
-separate audited cleanup after recovery review; do not delete it as part of
-this cutover.
+every ordered checkpoint. It then holds the exclusive runtime lock and
+publishes an owner-only `paygate-rust-finalize-recovery-v1` journal. The
+canonical recovery-boundary record is durably published before rollback
+authority is atomically renamed to its journal-bound retirement path and
+removed. While that journal exists, Rust startup returns exit 75 and rollback
+refuses to run.
+
+If finalization is interrupted, retain every artifact and rerun the exact same
+finalize command until it reports success. Recovery accepts only the journal's
+bound rollback directory or retirement path, tolerates partially removed
+contents without relying on a deleted manifest, and never touches unrelated
+sibling paths. The final `paygate-rust-recovery-boundary-v3` record states that
+Python paygate is deactivated, records the original and quarantine paths, marks
+rollback authority retired, and requires separate audited quarantine cleanup.
+Finalize never removes the old environment bytes; do not delete the quarantine
+as part of this cutover.

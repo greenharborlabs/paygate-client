@@ -104,15 +104,24 @@ struct MemoryCache {
     fail_delete: bool,
 }
 impl RequestCache for MemoryCache {
-    fn get_scoped(
+    fn claim_scoped(
         &self,
         _: &CredentialScope,
-        _: i64,
+        now: i64,
     ) -> Result<Option<CachedCredential>, RequestCacheError> {
         if self.fail_get {
             Err(RequestCacheError)
         } else {
-            Ok(self.values.lock().unwrap().first().cloned())
+            let mut values = self.values.lock().unwrap();
+            let Some(credential) = values.iter_mut().find(|credential| credential.usable(now))
+            else {
+                return Ok(None);
+            };
+            credential.use_count = credential
+                .use_count
+                .checked_add(1)
+                .ok_or(RequestCacheError)?;
+            Ok(Some(credential.clone()))
         }
     }
     fn put(&self, c: CachedCredential) -> Result<(), RequestCacheError> {
@@ -123,10 +132,19 @@ impl RequestCache for MemoryCache {
             Ok(())
         }
     }
-    fn mark_success(&self, _: &str, _: i64) -> Result<(), RequestCacheError> {
+    fn mark_success(&self, id: &str, now: i64) -> Result<(), RequestCacheError> {
         if self.fail_mark {
             Err(RequestCacheError)
         } else {
+            if let Some(credential) = self
+                .values
+                .lock()
+                .unwrap()
+                .iter_mut()
+                .find(|credential| credential.credential_id == id)
+            {
+                credential.last_success_at = Some(now);
+            }
             Ok(())
         }
     }
@@ -341,6 +359,76 @@ async fn payment_success_persists_then_commits_and_retries_once_with_verified_au
     assert!(auth[1].as_deref().unwrap().starts_with("Payment "));
     assert_eq!(ledger.spent_today().unwrap(), invoice.amount_sats());
     assert_eq!(cache.values.lock().unwrap().len(), 1);
+    assert_eq!(cache.values.lock().unwrap()[0].use_count, 1);
+}
+
+#[tokio::test]
+async fn newly_paid_single_use_credential_stays_consumed_after_ambiguous_retry() {
+    let (invoice, hash, preimage) = matching_invoice();
+    let (request, challenge) = request_and_402(&invoice, &hash);
+    let transport = ScriptTransport {
+        responses: Mutex::new(VecDeque::from([Ok(challenge), Err(HttpError::Timeout)])),
+        auth: Mutex::new(vec![]),
+    };
+    let cache = MemoryCache::default();
+    let raw = paygate::payers::RawPaymentResult {
+        amount_sats: invoice.amount_sats(),
+        fee_sats: 1,
+        payment_hash: Some(hash),
+        preimage_hex: Some(preimage),
+    };
+    let first = execute_with::<ConfirmedPayer, _, _, _>(
+        request.clone(),
+        &config(),
+        &DailySpendLedger::new(temp_path("new-paid-ambiguous")),
+        &transport,
+        &cache,
+        &RequestOptions {
+            no_pay: false,
+            refresh_credential: false,
+            no_cache: false,
+            cache_policy: "single-use".into(),
+            namespace: "default".into(),
+            verbose: false,
+            trace_json: false,
+        },
+        RealPayerFactory::new(true, move |_| {
+            Ok(ConfirmedPayer {
+                raw,
+                pays: Arc::new(AtomicUsize::new(0)),
+            })
+        }),
+    )
+    .await;
+    assert_eq!(first["paid"], true, "{first}");
+    assert_eq!(first["error"]["code"], "network_timeout");
+    assert_eq!(cache.values.lock().unwrap()[0].use_count, 1);
+    assert_eq!(transport.auth.lock().unwrap().len(), 2);
+
+    let after_restart = ScriptTransport {
+        responses: Mutex::new(VecDeque::from([Ok(ok_response())])),
+        auth: Mutex::new(vec![]),
+    };
+    let second = execute_with::<NeverPayer, _, _, _>(
+        request,
+        &config(),
+        &DailySpendLedger::new(temp_path("new-paid-after-restart")),
+        &after_restart,
+        &cache,
+        &RequestOptions {
+            no_pay: false,
+            refresh_credential: false,
+            no_cache: false,
+            cache_policy: "single-use".into(),
+            namespace: "default".into(),
+            verbose: false,
+            trace_json: false,
+        },
+        RealPayerFactory::new(true, move |_| Err(PaymentError::Transport)),
+    )
+    .await;
+    assert_eq!(second["ok"], true, "{second}");
+    assert_eq!(after_restart.auth.lock().unwrap().as_slice(), &[None]);
 }
 
 #[tokio::test]
@@ -394,7 +482,7 @@ async fn enabled_l402_selection_uses_verified_token_preimage_format_once() {
 }
 
 #[tokio::test]
-async fn cache_put_failure_retries_in_memory_but_retains_restart_guard() {
+async fn cache_put_failure_withholds_authorization_and_retains_restart_guard() {
     let (invoice, hash, preimage) = matching_invoice();
     let (request, challenge) = request_and_402(&invoice, &hash);
     let transport = ScriptTransport {
@@ -434,7 +522,7 @@ async fn cache_put_failure_retries_in_memory_but_retains_restart_guard() {
     .await;
     assert_eq!(output["ok"], false, "{output}");
     assert_eq!(output["paid"], true, "{output}");
-    assert_eq!(transport.auth.lock().unwrap().len(), 2);
+    assert_eq!(transport.auth.lock().unwrap().len(), 1);
     let transport2 = ScriptTransport {
         responses: Mutex::new(VecDeque::from([Ok(request_and_402(&invoice, &hash).1)])),
         auth: Mutex::new(vec![]),
@@ -648,6 +736,67 @@ async fn cache_hit_and_rejection_paths_precede_initial_request_and_wallet() {
     let auth = reject_transport.auth.lock().unwrap();
     assert!(auth[0].is_some());
     assert!(auth[1].is_none());
+}
+
+#[tokio::test]
+async fn ambiguous_cached_transport_retains_the_single_use_claim() {
+    let request = HttpRequest {
+        method: reqwest::Method::GET,
+        url: reqwest::Url::parse("https://paygate.test/resource").unwrap(),
+        headers: reqwest::header::HeaderMap::new(),
+        body: None,
+        phase_timeout: std::time::Duration::from_secs(5),
+    };
+    let mut credential = seeded_credential();
+    credential.max_uses = Some(1);
+    let cache = MemoryCache {
+        values: Mutex::new(vec![credential]),
+        ..Default::default()
+    };
+    let ambiguous = ScriptTransport {
+        responses: Mutex::new(VecDeque::from([Err(HttpError::Timeout)])),
+        auth: Mutex::new(vec![]),
+    };
+    let options = RequestOptions {
+        no_pay: false,
+        refresh_credential: false,
+        no_cache: false,
+        cache_policy: "single-use".into(),
+        namespace: "default".into(),
+        verbose: false,
+        trace_json: false,
+    };
+    let first = execute_with::<NeverPayer, _, _, _>(
+        request.clone(),
+        &config(),
+        &DailySpendLedger::new(temp_path("ambiguous-cache-first")),
+        &ambiguous,
+        &cache,
+        &options,
+        RealPayerFactory::new(true, move |_| Err(PaymentError::Transport)),
+    )
+    .await;
+    assert_eq!(first["error"]["code"], "network_timeout");
+    assert!(ambiguous.auth.lock().unwrap()[0].is_some());
+    assert_eq!(cache.values.lock().unwrap()[0].use_count, 1);
+
+    let after_restart = ScriptTransport {
+        responses: Mutex::new(VecDeque::from([Ok(ok_response())])),
+        auth: Mutex::new(vec![]),
+    };
+    let second = execute_with::<NeverPayer, _, _, _>(
+        request,
+        &config(),
+        &DailySpendLedger::new(temp_path("ambiguous-cache-second")),
+        &after_restart,
+        &cache,
+        &options,
+        RealPayerFactory::new(true, move |_| Err(PaymentError::Transport)),
+    )
+    .await;
+    assert_eq!(second["ok"], true, "{second}");
+    assert_eq!(after_restart.auth.lock().unwrap().as_slice(), &[None]);
+    assert_eq!(cache.values.lock().unwrap()[0].use_count, 1);
 }
 
 #[tokio::test]

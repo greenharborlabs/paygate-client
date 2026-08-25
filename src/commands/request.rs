@@ -29,7 +29,9 @@ pub trait RequestTransport: Send + Sync {
 pub struct RequestCacheError;
 
 pub trait RequestCache: Send + Sync {
-    fn get_scoped(
+    /// Return a matching bearer credential only after durably consuming one
+    /// use. The claim must remain consumed when transport outcome is unknown.
+    fn claim_scoped(
         &self,
         scope: &CredentialScope,
         now: i64,
@@ -59,7 +61,7 @@ impl RequestTransport for ReqwestTransport {
 
 pub struct NullRequestCache;
 impl RequestCache for NullRequestCache {
-    fn get_scoped(
+    fn claim_scoped(
         &self,
         _: &CredentialScope,
         _: i64,
@@ -81,12 +83,12 @@ impl RequestCache for NullRequestCache {
 }
 
 impl RequestCache for FileCredentialCache {
-    fn get_scoped(
+    fn claim_scoped(
         &self,
         requested: &CredentialScope,
         now: i64,
     ) -> Result<Option<CachedCredential>, RequestCacheError> {
-        self.get_scoped_fail_closed(requested, now)
+        self.claim_scoped_fail_closed(requested, now)
             .map_err(|_| RequestCacheError)
     }
     fn put(&self, credential: CachedCredential) -> Result<(), RequestCacheError> {
@@ -153,7 +155,7 @@ where
     );
 
     if !options.no_cache && !options.refresh_credential && !options.no_pay {
-        let cached = match cache.get_scoped(&preliminary_scope, now) {
+        let cached = match cache.claim_scoped(&preliminary_scope, now) {
             Ok(value) => value,
             Err(RequestCacheError) => {
                 return failure(
@@ -386,14 +388,25 @@ where
             &options.cache_policy,
             now,
         )
+        .map(|mut credential| {
+            // The authenticated retry must never leave the process before its
+            // one use is durable. Transport ambiguity therefore leaves this
+            // credential consumed across restarts.
+            credential.use_count = 1;
+            credential
+        })
     };
     let mut state_error = None;
     if let Some(record) = cached.clone() {
         if cache.put(record).is_err() {
-            state_error = Some((
+            return paid_failure(
                 "credential_state_failure",
                 "confirmed credential could not be saved",
-            ));
+                None,
+                &payment,
+                &challenge,
+                config,
+            );
         } else if payment.commit().is_err() {
             state_error = Some((
                 "state_unavailable",

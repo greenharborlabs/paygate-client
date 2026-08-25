@@ -151,6 +151,52 @@ impl FileCredentialCache {
             Ok(Some(credential))
         })
     }
+    /// Atomically claim one use of a matching credential before its bearer
+    /// value is returned to the request path. A claimed use is deliberately
+    /// retained when the subsequent transport outcome is ambiguous.
+    pub fn claim_scoped_fail_closed(
+        &self,
+        scope: &CredentialScope,
+        now: i64,
+    ) -> Result<Option<CachedCredential>, CacheError> {
+        let target = scoped(scope, &self.namespace);
+        self.with_lock(|| {
+            let mut entries = self.load_raw()?;
+            let Some(index) = entries.iter().position(|candidate| {
+                candidate.usable(now)
+                    && candidate.scope.request_key == target.request_key
+                    && candidate.scope.namespace == target.namespace
+                    && candidate.scope.origin_host == target.origin_host
+                    && candidate.scope.protocol == target.protocol
+                    && candidate.scope.payer_backend == target.payer_backend
+                    && candidate.scope.policy_hash == target.policy_hash
+                    && (target.service.is_none() || candidate.scope.service == target.service)
+            }) else {
+                return Ok(None);
+            };
+
+            let mut claimed = entries[index].clone();
+            if claimed.authorization.is_empty() {
+                if claimed.secret_storage.as_deref() != Some("keyring") {
+                    return Err(CacheError::Corrupt);
+                }
+                claimed.authorization = self
+                    .secret_store()
+                    .get(&claimed.scope.namespace, &claimed.credential_id)
+                    .map_err(|_| CacheError::Io)?
+                    .filter(|secret| !secret.is_empty())
+                    .ok_or(CacheError::Io)?;
+            }
+            let use_count = entries[index]
+                .use_count
+                .checked_add(1)
+                .ok_or(CacheError::Corrupt)?;
+            entries[index].use_count = use_count;
+            claimed.use_count = use_count;
+            self.save_metadata(&entries, false)?;
+            Ok(Some(claimed))
+        })
+    }
     pub fn put(&self, mut credential: CachedCredential) -> Result<(), CacheError> {
         credential.scope.namespace = self.namespace.clone();
         self.with_lock(|| {
@@ -222,10 +268,7 @@ impl FileCredentialCache {
         })
     }
     pub fn mark_success(&self, id: &str, now: i64) -> Result<(), CacheError> {
-        self.update(id, |c| {
-            c.use_count += 1;
-            c.last_success_at = Some(now);
-        })
+        self.update(id, |c| c.last_success_at = Some(now))
     }
     pub fn mark_rejected(&self, id: &str, now: i64) -> Result<(), CacheError> {
         self.update(id, |c| c.last_rejected_at = Some(now))

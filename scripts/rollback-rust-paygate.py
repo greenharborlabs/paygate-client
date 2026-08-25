@@ -598,8 +598,10 @@ def main():
             "digest": digest_descriptor(backup_fd, item["path_type"]),
         }
 
+    install_recovery = False
+
     def publish_marker(payload):
-        if marker_path.exists() or marker_path.is_symlink():
+        if (marker_path.exists() or marker_path.is_symlink()) and not install_recovery:
             raise RuntimeError("recovery marker already exists")
         if pending_marker.exists() or pending_marker.is_symlink():
             if (
@@ -629,6 +631,48 @@ def main():
         sync_dir(marker_path.parent)
 
     recovery = read_nofollow_json(marker_path, MAX_MARKER_BYTES, "recovery marker")
+    if (
+        recovery is not None
+        and recovery[0].get("schema") == "paygate-rust-finalize-recovery-v1"
+    ):
+        fail("finalize recovery is active; rerun the finalize command")
+    if (
+        recovery is not None
+        and recovery[0].get("schema") == "paygate-rust-install-recovery-v1"
+    ):
+        install_marker, _, install_marker_stat = recovery
+        install_keys = {
+            "schema",
+            "install_session_id",
+            "rollback_manifest_sha256",
+            "process_uid",
+            "runtime_lock",
+            "runtime_lock_dev",
+            "runtime_lock_ino",
+            "launcher",
+            "python_launcher_target",
+            "installed_rust_launcher_target",
+        }
+        if (
+            set(install_marker) != install_keys
+            or install_marker_stat.st_uid != uid
+            or install_marker_stat.st_nlink != 1
+            or stat.S_IMODE(install_marker_stat.st_mode) != 0o600
+            or install_marker["install_session_id"] != manifest["install_session_id"]
+            or install_marker["rollback_manifest_sha256"] != manifest_hash
+            or install_marker["process_uid"] != uid
+            or install_marker["runtime_lock"] != str(lock_path)
+            or not device_matches(
+                install_marker["runtime_lock_dev"], lock_stat.st_dev, device_remap
+            )
+            or install_marker["runtime_lock_ino"] != lock_stat.st_ino
+            or install_marker["launcher"] != str(launcher)
+            or install_marker["python_launcher_target"] != python_target
+            or install_marker["installed_rust_launcher_target"] != rust_target
+        ):
+            fail("install recovery marker identity mismatch")
+        install_recovery = True
+        recovery = None
     if recovery is None:
         for index, item in enumerate(manifest["state"]):
             destination, stage, parked = paths(index, item)
