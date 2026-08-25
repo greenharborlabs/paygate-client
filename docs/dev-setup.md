@@ -1,8 +1,8 @@
 # Developer Setup
 
-The repository currently contains both the Rust client and the Python
-compatibility oracle. A complete local environment needs Rust 1.88.0,
-`protoc`, and Python with the development dependencies.
+The production client is Rust. The repository also retains the Python client
+and frozen oracle for compatibility testing. A complete contributor environment
+needs Rust 1.88.0, `protoc`, and Python with the development dependencies.
 
 ## System prerequisites
 
@@ -91,9 +91,10 @@ The ordinary Rust build and non-keyring tests do not require a running desktop
 keyring. See [platform-qualification.md](platform-qualification.md) for the
 controlled native qualification environment and supported target matrix.
 
-## Python compatibility-oracle setup
+## Python compatibility-suite setup
 
-The package supports modern editable installs (`python3 -m pip install -e .`).
+The retained Python package supports modern editable installs
+(`python3 -m pip install -e .`).
 Older `pip` versions (for example `pip 21.2.4`) do not support PEP 660 editable
 install behavior, so developers should upgrade first:
 
@@ -109,12 +110,10 @@ reinstall it:
 python3 -m pip install -e ".[dev]"
 ```
 
-The runtime dependencies include `keyring` so cached payment credentials can use
-the OS keyring when available. If keyring storage is unavailable, the client
-falls back to a `0600` metadata/cache file under
-`~/.config/paygate-client/credentials.json` for the default profile, or
-`~/.config/paygate-client/profiles/<profile>/credentials.json` when `--profile`
-is set.
+An editable Python install creates its own legacy `paygate` console entry point.
+Do not use that executable to validate the Rust CLI. Use `cargo run --locked
+--bin paygate -- ...` or an explicitly installed Rust binary so the runtime
+under test is unambiguous.
 
 ## Profile-aware local CLI checks
 
@@ -122,19 +121,19 @@ Use `--profile` when testing multi-agent behavior. Each profile gets separate
 credential cache metadata, keyring account names, and daily spend ledger state.
 
 ```bash
-paygate request GET "https://api.example.com/protected" \
+cargo run --locked --bin paygate -- request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/worker-a.yaml \
   --profile worker-a \
   --no-pay --trace-json
 
-paygate credentials list --profile worker-a
-paygate credentials purge --all --profile worker-a
+cargo run --locked --bin paygate -- credentials list --profile worker-a
+cargo run --locked --bin paygate -- credentials purge --all --profile worker-a
 ```
 
 Use explicit paths when tests or containers need disposable state:
 
 ```bash
-paygate request GET "https://api.example.com/protected" \
+cargo run --locked --bin paygate -- request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/worker-a.yaml \
   --profile worker-a \
   --cache-path /tmp/paygate-worker-a/credentials.json \
@@ -156,7 +155,7 @@ poe fix
 Useful local CLI checks:
 
 ```bash
-paygate request --help
-paygate credentials --help
-paygate backend doctor --help
+cargo run --locked --bin paygate -- request --help
+cargo run --locked --bin paygate -- credentials --help
+cargo run --locked --bin paygate -- backend doctor --help
 ```

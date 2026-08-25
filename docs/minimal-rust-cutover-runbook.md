@@ -1,5 +1,11 @@
 # Minimal Rust cutover runbook
 
+> **Historical migration record:** the production deployment completed this
+> Python-to-Rust cutover on August 25, 2026. Do not use this runbook for a fresh
+> installation and do not start a second cutover session for the finalized
+> deployment. Retain it only for audit context and for interpreting immutable
+> recovery records from that migration.
+
 This runbook installs exactly one Rust `paygate` candidate frozen by the Wave 1
 preflight. It is intentionally fail-closed. Never put a mnemonic, API key,
 invoice preimage, authorization value, or response body in an acceptance record

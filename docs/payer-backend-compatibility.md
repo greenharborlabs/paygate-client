@@ -1,73 +1,101 @@
 # Payer backend compatibility
 
-Paygate payer backends must do more than pay a BOLT11 invoice. They must return
-the payment preimage and enforce a maximum routing fee before payment. A backend
-that cannot prove both capabilities is unsafe for automated payer use.
+The production Rust CLI currently wires one real-money payer: Breez SDK Spark.
+Other adapter modules remain in the source tree because their contracts and
+failure semantics are tested, but that does not make them callable production
+transports.
 
-| Backend | Can pay invoice | Returns preimage | Recommended for Paygate payer | Notes |
-| --- | --- | --- | --- | --- |
-| Test | Yes, for test challenges only | Yes, from the challenge test preimage | Yes, for local development only | Does not send real Lightning payments. Use it for first setup and fixture-driven tests. |
-| LND REST / Voltage | Yes | Yes, via terminal `payment_preimage` from `POST /v2/router/send` | Yes | First documented real-money backend. Requires `fee_limit_sat`, REST URL, macaroon hex, and usually a TLS cert path. Hosted LND providers are compatible when they expose equivalent LND REST credentials. |
-| Breez SDK Spark | Yes | Yes, when BOLT11 is sent with `prefer_spark=false` | Yes | Proven in a real 5 sat payment. The adapter checks the prepared Lightning fee before payment, disables Spark preference, and verifies the returned preimage. |
-| Phoenixd | Maybe | Maybe, API/version dependent | No, capability spike only | Unsupported for real automated payer use until `doctor` and `pay-invoice` prove preimage return and enforceable fee-limit behavior for the exact Phoenixd build. |
-| LNbits with Spark | Yes, when wallet is funded | Not generally exposed to Paygate | No | Useful as a merchant/receiver wallet. Unsupported as an automated payer unless the configured funding source exposes payment preimages and fee-limit enforcement. |
-| LNbits with LND funding source | Yes | Maybe, if the funding source exposes preimages through LNbits or direct LND access | No, use LND REST directly when possible | LNbits may sit in front of LND for receiving or merchant workflows, but Paygate payer automation should use direct LND REST credentials unless LNbits proves preimage and fee-cap support. |
-| Blink | Yes | Not through a supported Paygate payer API | No | Not recommended for automated Paygate payer use unless Blink exposes payer-side preimages and enforceable fee caps through a supported API. |
+Paygate payer backends must do more than pay a BOLT11 invoice. They must return
+the payment preimage and enforce a maximum routing fee before submission. A
+backend that cannot prove both properties fails closed.
+
+## Rust CLI support matrix
+
+| Backend | Rust implementation | `request` payment | `backend doctor` | `backend pay-invoice` | Production status |
+| --- | --- | --- | --- | --- | --- |
+| Breez SDK Spark | Production SDK transport | Yes | Yes | Yes | Supported with explicit local policy |
+| Test mode | Domain/test implementation | No | Config/readiness response only | No | Test and compatibility use only |
+| LND REST / Voltage | Adapter contract with injectable test transport | No production HTTP transport | Unsupported response | Unsupported response | Not supported in this release |
+| Phoenixd | Fail-closed placeholder | No | Unsupported response | Unsupported response | Not supported in this release |
+| LNbits | No Rust payer adapter | No | No | No | Receiver/merchant use only unless a future payer adapter proves the required capabilities |
+| Blink | No Rust payer adapter | No | No | No | Unsupported |
+
+The retained Python client has additional historical adapters. Their presence,
+PyPI packaging, or earlier documentation does not expand the production Rust
+support matrix.
+
+## Breez SDK Spark
+
+Breez is the supported production payer because its Rust SDK path can:
+
+- prepare a BOLT11 payment before submission;
+- expose the prepared Lightning fee for comparison with `max_fee_sats`;
+- send with `prefer_spark=false` so a Lightning preimage is available;
+- return payment hash, amount, fee, and preimage evidence;
+- disconnect while preserving post-submission ambiguity semantics; and
+- use isolated local wallet storage with exclusive ownership.
+
+The common verifier hashes the returned preimage and compares it with the
+signed invoice payment hash. A proof mismatch never becomes a usable payment
+credential.
+
+## LND REST status
+
+The Rust source includes a tested `LndRestPayer<T>` contract. Tests cover
+pre-submission fee bounds, redirect refusal, terminal stream handling,
+ambiguous submission, and invoice-bound proof verification. The production CLI
+does not supply an LND HTTP transport, so selecting `lnd-rest` cannot submit a
+payment and diagnostic payment commands return an unsupported classification.
+
+Do not infer production support from `scripts/setup-voltage-paygate.sh` or the
+legacy Python package. Those are retained migration/compatibility assets.
+
+## Test-mode status
+
+The example config uses `test-mode` because it is safe for parsing, doctor, and
+ordinary unpaid request checks. The production Rust request dispatcher does not
+wire it as a payer for `402` challenges. Rust integration tests inject the test
+payer directly where deterministic challenge behavior is needed.
+
+## Phoenixd status
+
+Phoenixd is an explicit unsupported placeholder in the current Rust release.
+It owns no endpoint, credentials, or submission capability. See
+[Phoenixd status](phoenixd-spike.md).
 
 ## Required payer capabilities
 
-- Pay a BOLT11 invoice programmatically.
-- Return the exact payment preimage for successful payments.
-- Enforce `max_fee_sats` before submitting or committing the payment.
-- Return enough payment hash, amount, and fee metadata for diagnostics.
-- Fail closed when credentials, fee caps, or backend responses are invalid.
+A future production backend must:
 
-## Policy requirements
+- pay an amount-bearing BOLT11 invoice programmatically;
+- enforce `max_fee_sats` before submission;
+- return the exact successful payment preimage;
+- return payment hash, amount, and final fee metadata;
+- distinguish not-submitted, submitted-unknown, final failure, and confirmed
+  outcomes; and
+- fail closed when credentials, fee caps, transport responses, cleanup, or
+  proof verification are unsafe.
 
-Real payment requires explicit local policy:
+## Local policy requirements
 
-- `policy.allowed_hosts` must include the target `host:port`.
-- `policy.allowed_services` must include the Paygate challenge service.
-- `policy.max_request_sats` must cap each invoice amount.
-- `policy.max_fee_sats` must cap routing fees.
-- `policy.daily_budget_sats` must cap daily automated spend.
+Every real payment requires explicit local policy:
 
-Empty allowlists fail closed. Do not use wildcard host or service values.
+- `policy.allowed_hosts` includes the exact target `host:port`;
+- `policy.allowed_services` includes the Paygate challenge service;
+- `policy.max_request_sats` caps each invoice amount;
+- `policy.max_fee_sats` caps routing fees; and
+- `policy.daily_budget_sats` caps retained counting spend.
 
-## Credential reuse and cache safety
+Empty allowlists fail closed. Wildcard hosts and services are not supported.
 
-`paygate request` is a payment/session credential manager, not a blind
-pay-every-request wrapper. The client checks for a valid cached credential
-before entering a new `402` payment flow. If a cached credential succeeds, the
-request returns with `paid: false` and `credentialCache.hit: true`.
+## Credential reuse and profiles
 
-Cached credentials are scoped and must not be reused across:
+Cached credentials are scoped by profile, target origin, service, protocol,
+payer backend, policy context, and request key. Single-use claims are durably
+consumed before their authorization value is returned. Expired or rejected
+credentials are evicted before a new payment flow.
 
-- CLI profile or agent namespace
-- target `host:port`
-- Paygate service
-- protocol, `Payment` or `L402`
-- payer backend
-- local policy context
-- request key
-
-If a cached credential is expired, over its configured use count, or rejected
-with `401` or `402`, the client discards it and re-enters the normal challenge
-flow. Use `--refresh-credential` to force a new payment flow, `--no-cache` to
-bypass cache reads and writes, and `paygate credentials purge` to remove cached
-credentials.
-
-Credential secrets are bearer-style payment material. `paygate credentials list`
-and `show` redact them. The metadata file is stored at
-`~/.config/paygate-client/credentials.json` with `0600` permissions for the
-default profile. Non-default profiles store metadata under
-`~/.config/paygate-client/profiles/<profile>/credentials.json`. When the Python
-`keyring` backend is available, the authorization value is stored in the OS
-keyring instead of the metadata file, and the keyring account is scoped by
-profile.
-
-Use `--profile` whenever multiple agents share the same Unix user, home
-directory, or container image:
+Use `--profile` whenever multiple agents share a Unix user or state volume:
 
 ```bash
 paygate request GET "https://api.example.com/protected" \
@@ -78,28 +106,25 @@ paygate credentials list --profile worker-a
 paygate credentials purge --all --profile worker-a
 ```
 
-Profiles also isolate daily spend ledgers. The default ledger remains
-`~/.local/state/paygate-client/daily-spend-ledger.json`, while profile ledgers
-use
-`~/.local/state/paygate-client/profiles/<profile>/daily-spend-ledger.json`.
-Set `--cache-path` or `--ledger-path` when an orchestrator wants to mount
-profile state somewhere else.
-
-For manager/subagent workflows, give the manager profile the broad payer
-credentials and give each subagent a separate profile with a narrower config,
-restricted LND macaroon, or no payer credentials. Never let subagents share the
-manager profile unless they should inherit the same payment authority.
+Credential metadata is stored in owner-only files. Authorization values use
+the OS keyring when available and otherwise use the owner-only fallback file.
+Profiles also isolate the daily spend ledger.
 
 ## Diagnostic commands
 
+For a Breez config:
+
 ```bash
-paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
+paygate backend doctor \
+  --config ~/.config/paygate-client/config.yaml \
+  --json
+
 paygate backend pay-invoice <bolt11> \
   --config ~/.config/paygate-client/config.yaml \
   --max-fee-sats 5 \
   --json
 ```
 
-`doctor` must report `maxFeeLimitSupported: true`. `pay-invoice` must report
-`ok: true`, `preimageVerified: true`, and a redacted payment preimage. If either
-check fails, do not use that backend for automated Paygate payer traffic.
+`doctor` is non-paying. `pay-invoice` sends real money and must be explicitly
+approved. Do not use a successful Breez result as evidence that another backend
+is supported.
