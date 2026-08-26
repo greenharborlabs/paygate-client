@@ -1,10 +1,12 @@
 # Rust native platform qualification
 
-This is the native runner contract for the Rust cutover. All four targets use
+This is the native runner contract for Rust release candidates. All four targets use
 standard GitHub-hosted runners available to this public repository. The
 workflow's default dispatch value is `false` until the workflow is intentionally
 dispatched; once enabled, missing or unavailable runners fail
-qualification rather than silently passing or skipping a target.
+qualification rather than silently passing or skipping a target. This document
+defines the evidence contract; it does not claim that a specific release has a
+current accepted four-target evidence bundle.
 
 ## Supported qualification matrix
 
@@ -26,8 +28,8 @@ Emulation may prove deterministic CLI behavior, but **emulation cannot qualify**
 minimum-glibc runtime behavior, macOS runtime behavior, or real wallet canaries.
 In particular, `macos-latest` is not evidence for the Intel macOS 15 floor. If native
 macOS 15 or native aarch64 glibc 2.31 cannot be secured, qualification must stop
-and the supported target matrix must be amended before the Rust implementation
-is enabled.
+and the qualification target matrix must be amended before that release is
+claimed qualified.
 
 Every executor verifies its physical kernel architecture with `uname` before
 extracting or launching the target binary. The Intel macOS leg additionally
@@ -61,10 +63,11 @@ The aggregate action
 fails closed if any target's evidence is missing, skipped, timed-out, stale,
 malformed, or lacks required manifest fields.
 
-Wave 1 builds the dependency-free Rust stub in `tests/platform-smoke/stub` with
+The historical Wave 1 scaffold built the dependency-free Rust stub in
+`tests/platform-smoke/stub` with
 Rust 1.88.0 and its own committed `Cargo.lock`. This breaks the dependency cycle:
-native target infrastructure is qualified before Wave 2 creates the production
-crate. Wave 2 replaces the stub manifest input with the production crate while
+native target infrastructure could be qualified before Wave 2 created the production
+crate. The current workflow uses the production crate while
 preserving the same artifact, attestation, linkage, and runtime gates.
 
 ## Run the qualification gate

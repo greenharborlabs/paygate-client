@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "paygate-client"
 dynamic = ["version"]
-description = "Command-line client for Paygate."
+description = "Legacy Python compatibility client for Paygate."
 readme = {file = "PYPI_README.md", content-type = "text/markdown"}
 requires-python = ">=3.10,<3.15"
 license = "MIT"

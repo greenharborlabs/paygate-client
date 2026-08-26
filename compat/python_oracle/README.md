@@ -16,8 +16,8 @@ runs use deliberately different ambient HOME, XDG, locale, timezone, and clock
 inputs; their complete evidence must be byte-identical.
 
 This is a frozen legacy compatibility oracle, not an implementation target.
-Its 37-case baseline is retained as a rollback and behavioral reference until
-the Rust cutover is complete. New adapter-negative cases, configuration
+Its 37-case baseline was used during the completed Rust migration and remains a
+behavioral regression reference. New adapter-negative cases, configuration
 precedence cases, backend payment evidence, and submission/cancellation
 guarantees belong in Rust tests; do not expand this Python bundle.
 

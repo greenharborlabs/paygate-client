@@ -1,23 +1,29 @@
-# Paygate Client
+# Legacy Python Paygate Client
 
-Paygate Client is a command-line client for services protected by the Paygate
-payment protocol.
+This package contains the retained Python implementation of Paygate Client.
+The production client is now the Rust `paygate` binary and is installed from
+the locked Rust source checkout. New production deployments should follow the
+[Rust installation guide](https://github.com/greenharborlabs/paygate-client#install-the-rust-cli),
+not install this Python package.
 
 ## Install
 
-Install the client and the optional Breez SDK Spark payer support:
+For Python compatibility testing only, install the package and optional Breez
+SDK Spark dependency:
 
 ```bash
 pipx install "paygate-client[breez]"
 ```
 
-## Compatibility
+This command installs the legacy Python console entry point. It does not
+install or update the Rust binary.
 
-The declared CPython support range is 3.9 through 3.14, but these interpreter
-and platform combinations are unverified until W2 CI validation is in place.
-Breez SDK Spark is available through the optional extra, but its platform and
-interpreter combinations are also unverified. Do not treat an unverified
-combination as supported.
+## Legacy compatibility
+
+The declared and tested CPython support range is 3.10 through 3.14. The Python
+implementation remains available for regression comparison and package
+compatibility; current backend and runtime support claims apply to the Rust
+client unless explicitly labeled otherwise.
 
 For configuration, supported payer details, and source code, see the
 [documentation](https://github.com/greenharborlabs/paygate-client/tree/main/docs)

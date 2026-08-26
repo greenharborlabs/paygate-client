@@ -1,5 +1,11 @@
 # Rust dependency qualification report
 
+> **Historical snapshot:** this report records qualification state as of July
+> 19, 2026. Its pending and blocked statements are not the current product
+> status. The Rust production cutover later merged in PR #17 and completed on
+> August 25, 2026; current install and support claims live in the
+> [project README](../README.md).
+
 Date: 2026-07-19  
 Scope: Wave 2 / W2-02  
 Toolchain: Rust 1.88.0 (`rustc 1.88.0`, `cargo 1.88.0`)

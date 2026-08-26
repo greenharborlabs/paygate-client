@@ -1,123 +1,156 @@
 # paygate-client
 
-`paygate-client` is a CLI for calling HTTP services that require a
-Paygate `402 Payment Required` challenge. It can parse Paygate MPP `Payment`
-challenges, optionally parse L402 challenges, enforce local spend policy, pay a
-BOLT11 invoice through a configured payer backend, and retry the request with a
-payment credential.
+`paygate-client` is a Rust CLI for calling HTTP services protected by a
+Paygate `402 Payment Required` challenge. It validates MPP `Payment` and
+optional L402 challenges, enforces local spend policy, pays a BOLT11 invoice
+through Breez SDK Spark, and retries the request with a scoped payment
+credential.
 
-The repository now contains the controlled tooling for the minimal Rust
-deployment cutover. Operators must start with the immutable Wave 1 preflight
-record and follow the fixture/oracle, Rust-product-test, doctor, separately
-approved invoice and protected-request, install, restart/cache, rollback, and
-finalization gates in the
-[minimal Rust cutover runbook](docs/minimal-rust-cutover-runbook.md). The
-cutover scripts never treat a passing test as payment approval and never run a
-payment during rollback.
+The production command is the Rust `paygate` binary. Python code remains in
+this repository for compatibility testing, historical behavior comparison,
+and a legacy package workflow. It is not the primary runtime.
 
-## Install
+## Status
 
-For normal CLI use from this checkout:
+- Version: `0.1.0`
+- Production payer backend: Breez SDK Spark
+- Protocols: MPP `Payment` and optional L402
+- Native qualification targets: Linux x86_64, Linux ARM64, macOS Intel, and
+  macOS Apple Silicon; consult the evidence workflow before claiming a
+  particular release is qualified
+- Public distribution: source installation only; there is currently no
+  crates.io package or prebuilt GitHub Release
+
+The deployment migration to Rust is complete. Fresh installations do not use
+migration scripts. The retained migration runbook, Wave plans, and
+qualification reports are historical evidence, not installation instructions.
+
+## Install the Rust CLI
+
+The checked-in toolchain selects Rust 1.88.0. The Breez dependency graph also
+needs the Protocol Buffer compiler at build time.
+
+Install prerequisites on macOS:
 
 ```bash
-pipx install -e .
+brew install protobuf
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Install prerequisites on Ubuntu or Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install --yes protobuf-compiler
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Build and install from a reviewed checkout:
+
+```bash
+git clone https://github.com/greenharborlabs/paygate-client.git
+cd paygate-client
+git checkout ca087739b98e7f5259096234730d076eb0dc87b4
+cargo install --locked --path .
+paygate --version
 paygate --help
 ```
 
-For local development:
+The pinned commit above is the first reviewed Rust-only production baseline.
+For a newer deployment, replace it with a reviewed commit from `main`. Keep
+`--locked`; it makes Cargo use the committed dependency graph. Cargo installs
+the executable to `~/.cargo/bin/paygate` unless `CARGO_HOME` is configured
+differently.
 
-```bash
-python3 -m pip install -e ".[dev]"
-paygate --help
-```
+## Safe first run
 
-To run MyPy locally, use the self-bootstrapping wrapper:
-
-```bash
-scripts/typecheck.sh
-```
-
-It creates an isolated repo `.venv-typecheck` using Python 3.10 (the CI
-version) and installs or refreshes the development dependencies whenever
-`pyproject.toml` changes. Pass paths or MyPy options through to MyPy, for
-example `scripts/typecheck.sh paygate_client`. If Python 3.10 is not your default
-interpreter, set `PAYGATE_CLIENT_PYTHON` to its path.
-
-For guided Voltage/LND setup, run:
-
-```bash
-scripts/setup-voltage-paygate.sh
-```
-
-The wizard prompts for the Voltage REST URL, macaroon hex, optional TLS cert
-path, allowlist entries, and spend caps. It writes the Paygate config to
-`~/.config/paygate-client/config.yaml` and stores secrets only in
-`~/.config/paygate-client/paygate-env.sh`.
-
-## Breez Preimage Doctor
-
-To test whether Breez SDK Spark can pay a BOLT11 invoice and return the
-Lightning preimage Paygate needs, run the isolated spike script:
-
-```bash
-python3 -m pip install breez-sdk-spark
-export BREEZ_API_KEY="..."
-export BREEZ_MNEMONIC="..."
-scripts/breez-preimage-doctor.py "<bolt11 invoice>"
-```
-
-The script forces `prefer_spark=False`, extracts `payment_hash` and `preimage`
-from the returned payment object, verifies `sha256(preimage) == payment_hash`,
-and prints `PASS` or a loud JSON failure.
-
-## First Local Config
-
-Start with `test-mode`. It never sends real Lightning payments and can satisfy
-test challenges that include a test preimage.
+Start with the example configuration. Its `test-mode` backend is safe for
+config validation and ordinary unpaid HTTP responses, but it is not wired as a
+live payer in the production Rust CLI.
 
 ```bash
 mkdir -p ~/.config/paygate-client
 cp examples/paygate-client.yaml ~/.config/paygate-client/config.yaml
-paygate --version
+
+paygate backend doctor \
+  --config ~/.config/paygate-client/config.yaml \
+  --json
+
+paygate request GET https://example.com \
+  --config ~/.config/paygate-client/config.yaml
 ```
 
-The config schema is:
+Do not use `test-mode`, LND REST, or Phoenixd for a paid Rust CLI request.
+Their current support levels are listed in
+[Payer backend compatibility](docs/payer-backend-compatibility.md).
+
+## Configure Breez SDK Spark
+
+Breez is the production payment backend. It pays BOLT11 invoices with
+`prefer_spark=false`, checks the prepared Lightning fee before submission, and
+requires a preimage that hashes to the invoice payment hash.
+
+Create `~/.config/paygate-client/config.yaml`:
 
 ```yaml
 payer:
-  backend: test-mode
+  backend: breez
+
 policy:
   max_request_sats: 50
   max_fee_sats: 10
   daily_budget_sats: 500
   allowed_hosts:
-    - localhost:8080
+    - api.example.com:443
   allowed_services:
     - paygate-reference-service
+
 protocol:
   preferred: Payment
   allow_l402: true
+
+breez:
+  api_key_env: BREEZ_API_KEY
+  mnemonic_env: BREEZ_MNEMONIC
+  network: mainnet
+  storage_dir: ~/.local/share/paygate-client/breez
+  completion_timeout_secs: 10
 ```
 
-Payment is denied unless the target host is in `policy.allowed_hosts`, the
-challenge service is in `policy.allowed_services`, the invoice amount is at or
-below `policy.max_request_sats`, the local daily budget is available, and the
-backend can enforce `policy.max_fee_sats`.
-
-## Request A Resource
-
-Command form:
+Provide the wallet secrets through the process environment:
 
 ```bash
-paygate request GET "https://..."
+export BREEZ_API_KEY="replace-with-breez-api-key"
+export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
+
+paygate backend doctor \
+  --config ~/.config/paygate-client/config.yaml \
+  --json
 ```
+
+For restart-persistent operation, store those two `export` lines in
+`~/.config/paygate-client/paygate-env.sh` and set mode `0600`:
+
+```bash
+chmod 600 ~/.config/paygate-client/paygate-env.sh
+```
+
+Process environment values take precedence over the companion file. The
+legacy `voltage-env.sh` filename is read only when `paygate-env.sh` is absent;
+the files are never merged.
+
+`backend doctor` does not create or pay an invoice. It must return `ok: true`,
+`backendReady: true`, and `maxFeeLimitSupported: true` before any paid command
+is considered.
+
+## Request a resource
 
 ```bash
 paygate request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/config.yaml
 ```
 
-Headers and bodies are supported:
+Headers, JSON bodies, and per-phase timeouts are supported:
 
 ```bash
 paygate request POST "https://api.example.com/protected" \
@@ -127,59 +160,35 @@ paygate request POST "https://api.example.com/protected" \
   --timeout 30
 ```
 
-The command prints a JSON envelope. Successful unpaid responses include
-`ok: true`, `paid: false`, and `response`. Successful paid responses include
-`ok: true`, `paid: true`, `response`, and top-level `payerBackend`,
-`amountSats`, `feeSats`, and `paymentHash` metadata. Failures include
-`ok: false`, `paid`, and `error.code` plus `error.message`.
+The command writes one JSON envelope to stdout. Successful unpaid responses
+contain `ok: true`, `paid: false`, and `response`. Successful paid responses
+also contain `payerBackend`, `amountSats`, `feeSats`, and `paymentHash`.
+Failures contain `ok: false`, `paid`, and a redacted `error` object.
 
-By default, `paygate request` acts as a payment/session credential manager:
+### Inspect without paying
 
-1. It checks for a valid cached credential scoped to the request.
-2. If one works, it sends the request without paying again and returns
-   `credentialCache.hit: true`.
-3. If no reusable credential works and the server returns `402`, it enforces
-   local policy, pays, builds the retry credential, caches it when the challenge
-   has a safe reuse window, and retries.
-
-Cached credentials are bearer-style payment credentials. Treat them like
-secrets. The metadata file is `~/.config/paygate-client/credentials.json` with
-`0600` permissions. When the optional keyring backend is available, the
-credential secret is stored in the OS keyring and only metadata is written to
-the file.
-
-For shared machines or multi-agent environments, use `--profile` to isolate
-each agent's cached credentials, keyring entries, and daily spend ledger. The
-default profile preserves the legacy paths:
-
-- default credential cache:
-  `~/.config/paygate-client/credentials.json`
-- profile credential cache:
-  `~/.config/paygate-client/profiles/<profile>/credentials.json`
-- default spend ledger:
-  `~/.local/state/paygate-client/daily-spend-ledger.json`
-- profile spend ledger:
-  `~/.local/state/paygate-client/profiles/<profile>/daily-spend-ledger.json`
-
-Profiles are intended for manager/subagent setups. A manager agent can use a
-profile with payer credentials and a larger policy budget. Subagents should use
-separate profiles with narrower config policy, restricted backend macaroons, or
-no payer credentials at all. Do not share the manager profile with subagents.
-
-Useful request flags:
+`--no-pay` validates the `402` challenge and local policy but does not submit a
+payment:
 
 ```bash
-# Inspect the 402 challenge and local policy result without paying.
 paygate request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/config.yaml \
-  --no-pay --trace-json
+  --no-pay \
+  --trace-json
+```
 
-# Show a human-readable step trail on stderr.
+The selected config still needs non-empty values for its referenced environment
+variables, but the no-pay path does not create or pay an invoice.
+
+### Tracing and cache controls
+
+```bash
+# Human-readable events on stderr.
 paygate request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/config.yaml \
   --verbose
 
-# Bypass cache and force a fresh payment flow.
+# Force a new challenge/payment flow instead of using a cached credential.
 paygate request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/config.yaml \
   --refresh-credential
@@ -188,219 +197,62 @@ paygate request GET "https://api.example.com/protected" \
 paygate request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/config.yaml \
   --no-cache
-
-# Run as a specific agent profile with isolated cache and budget ledger.
-paygate request GET "https://api.example.com/protected" \
-  --config ~/.config/paygate-client/config.yaml \
-  --profile worker-a
-
-# Override cache and ledger locations for containerized agents.
-paygate request GET "https://api.example.com/protected" \
-  --config ~/.config/paygate-client/config.yaml \
-  --profile worker-a \
-  --cache-path /tmp/paygate-worker-a/credentials.json \
-  --ledger-path /tmp/paygate-worker-a/daily-spend-ledger.json
 ```
 
-Credential cache commands:
+`--trace-json` writes redacted JSON-line events to stderr. Response bodies and
+authorization values are not included in trace fields.
+
+## Credential cache and profiles
+
+Before entering a new payment flow, `paygate request` atomically claims a
+matching cached credential. A successful cache reuse reports `paid: false` and
+`credentialCache.hit: true`. Single-use credentials are durably consumed
+before their bearer value is returned, preventing concurrent reuse.
+
+Credential metadata uses owner-only files. Authorization values use the OS
+keyring when available and otherwise fall back to the owner-only state file.
+
+Default paths:
+
+- Credential cache: `~/.config/paygate-client/credentials.json`
+- Spend ledger: `~/.local/state/paygate-client/daily-spend-ledger.json`
+
+Profile paths:
+
+- Credential cache:
+  `~/.config/paygate-client/profiles/<profile>/credentials.json`
+- Spend ledger:
+  `~/.local/state/paygate-client/profiles/<profile>/daily-spend-ledger.json`
+
+Use a separate profile whenever multiple agents share a Unix account:
 
 ```bash
-paygate credentials list
-paygate credentials show <credential-id>
-paygate credentials purge --host localhost:8080 --service paygate-reference-service
-paygate credentials purge --all
+paygate request GET "https://api.example.com/protected" \
+  --config ~/.config/paygate-client/worker-a.yaml \
+  --profile worker-a
 
-# Inspect or purge a specific agent profile.
 paygate credentials list --profile worker-a
 paygate credentials show <credential-id> --profile worker-a
 paygate credentials purge --all --profile worker-a
 ```
 
-`list` and `show` redact credential secrets by default.
-
-### Multi-Agent Client Example
-
-Use separate configs when agents have different authority. This example gives
-the manager a broader LND macaroon and the worker a restricted macaroon and
-smaller policy budget:
-
-```yaml
-# ~/.config/paygate-client/manager.yaml
-payer:
-  backend: lnd-rest
-policy:
-  max_request_sats: 100
-  max_fee_sats: 10
-  daily_budget_sats: 1000
-  allowed_hosts:
-    - api.example.com:443
-  allowed_services:
-    - paygate-reference-service
-protocol:
-  preferred: Payment
-  allow_l402: true
-lnd:
-  rest_url_env: "PAYGATE_CLIENT_LND_REST_URL"
-  macaroon_hex_env: "PAYGATE_CLIENT_MANAGER_MACAROON_HEX"
-```
-
-```yaml
-# ~/.config/paygate-client/worker-a.yaml
-payer:
-  backend: lnd-rest
-policy:
-  max_request_sats: 10
-  max_fee_sats: 2
-  daily_budget_sats: 50
-  allowed_hosts:
-    - api.example.com:443
-  allowed_services:
-    - paygate-reference-service
-protocol:
-  preferred: Payment
-  allow_l402: true
-lnd:
-  rest_url_env: "PAYGATE_CLIENT_LND_REST_URL"
-  macaroon_hex_env: "PAYGATE_CLIENT_WORKER_A_MACAROON_HEX"
-```
+Explicit state paths are useful in containers:
 
 ```bash
-export PAYGATE_CLIENT_LND_REST_URL="https://127.0.0.1:8080"
-export PAYGATE_CLIENT_MANAGER_MACAROON_HEX="<manager-macaroon-hex>"
-export PAYGATE_CLIENT_WORKER_A_MACAROON_HEX="<restricted-worker-macaroon-hex>"
-
-paygate request GET "https://api.example.com/protected" \
-  --config ~/.config/paygate-client/manager.yaml \
-  --profile manager
-
 paygate request GET "https://api.example.com/protected" \
   --config ~/.config/paygate-client/worker-a.yaml \
-  --profile worker-a
+  --profile worker-a \
+  --cache-path /tmp/paygate-worker-a/credentials.json \
+  --ledger-path /tmp/paygate-worker-a/daily-spend-ledger.json
 ```
 
-The two requests use separate credential caches, keyring accounts, and daily
-budget ledgers. If the manager pays for reusable credentials, do not copy the
-manager cache to workers unless the credential is intentionally delegated and
-safe for that worker's host, service, and use window.
+Do not share a manager profile with less-trusted workers. Cached payment
+credentials are bearer credentials even though list/show output redacts them.
 
-## Local Dev Payment Recipes
+## Standalone invoice payment
 
-These recipes use `test-mode`, which does not make real Lightning payments. The
-local reference service must run in dev mode and include a `test_preimage` in
-local/test 402 responses. The preimage is a 32-byte Lightning payment preimage
-encoded as 64 lowercase hex characters, and its SHA-256 hash must match the
-challenge invoice's payment hash.
-
-### L402 With Test Preimage
-
-Use the default example config when it prefers L402:
-
-```yaml
-protocol:
-  preferred: L402
-  allow_l402: true
-```
-
-Run the local request:
-
-```bash
-paygate request GET \
-  "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
-  --config examples/paygate-client.yaml \
-  --no-pay --trace-json
-```
-
-Then run the local paid retry path:
-
-```bash
-paygate request GET \
-  "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
-  --config examples/paygate-client.yaml \
-  --verbose
-```
-
-Expected success shape:
-
-```json
-{
-  "ok": true,
-  "paid": true,
-  "protocol": "L402",
-  "payerBackend": "test-mode"
-}
-```
-
-The retry sends:
-
-```http
-Authorization: L402 <token-or-macaroon>:<64 lowercase hex preimage>
-```
-
-### MPP Payment With Test Preimage
-
-Create a temporary Payment-preferred config:
-
-```bash
-cp examples/paygate-client.yaml /tmp/paygate-client-payment.yaml
-perl -0pi -e 's/preferred: L402/preferred: Payment/' \
-  /tmp/paygate-client-payment.yaml
-```
-
-Run the same local request:
-
-```bash
-paygate request GET \
-  "http://localhost:8080/api/v1/trust/report?domain=example.com&checks=dns" \
-  --config /tmp/paygate-client-payment.yaml \
-  --verbose
-```
-
-Expected success shape:
-
-```json
-{
-  "ok": true,
-  "paid": true,
-  "protocol": "Payment",
-  "payerBackend": "test-mode"
-}
-```
-
-The retry sends:
-
-```http
-Authorization: Payment <base64url-json>
-```
-
-## Backend Diagnostics
-
-Run diagnostics before enabling real payments. The diagnostic commands are
-`paygate backend doctor --json` and
-`paygate backend pay-invoice <bolt11> --json`; use the runnable forms below so
-the required config and fee options are included.
-
-Copy-pasteable forms with the required config and fee options:
-
-```bash
-paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
-```
-
-Expected success shape:
-
-```json
-{
-  "ok": true,
-  "backend": "lnd-rest",
-  "configValid": true,
-  "envSecretsAvailable": true,
-  "capabilities": {
-    "preimageRequired": true,
-    "maxFeeLimitSupported": true
-  }
-}
-```
-
-Pay a low-value standalone invoice only after `doctor` succeeds:
+This command sends a real payment. Use it only after `backend doctor` succeeds
+and after reviewing the invoice amount, configured daily budget, and fee cap:
 
 ```bash
 paygate backend pay-invoice <bolt11> \
@@ -409,171 +261,37 @@ paygate backend pay-invoice <bolt11> \
   --json
 ```
 
-Expected success shape:
+The production command supports Breez only. A successful result reports a
+redacted preimage, `preimageVerified: true`, and `verificationSource:
+"invoice"`. An ambiguous submission is retained as counting spend and must not
+be retried automatically.
 
-```json
-{
-  "ok": true,
-  "backend": "lnd-rest",
-  "payment": {
-    "amountSats": 1,
-    "feeSats": 0,
-    "paymentHash": "<hex>",
-    "preimage": "[REDACTED_SECRET]"
-  },
-  "preimageVerified": true,
-  "verificationSource": "invoice"
-}
-```
+## Backend support
 
-## Real-Money Backend: LND REST
+| Backend | Rust CLI status | Paid production use |
+| --- | --- | --- |
+| Breez SDK Spark | Production transport is wired for requests, doctor, and standalone invoice payment | Supported with explicit local policy |
+| Test mode | Config and doctor compatibility plus test-domain implementation | Not wired as a production request payer |
+| LND REST / Voltage | Adapter contract and failure semantics are tested; production HTTP transport is not wired | Unsupported in this release |
+| Phoenixd | Fail-closed placeholder | Unsupported in this release |
 
-The first documented real-money payer backend is `lnd-rest`, including hosted
-LND providers such as Voltage when they expose LND REST credentials.
+See [Payer backend compatibility](docs/payer-backend-compatibility.md) for the
+full capability and safety matrix.
 
-```yaml
-payer:
-  backend: lnd-rest
-policy:
-  max_request_sats: 50
-  max_fee_sats: 10
-  daily_budget_sats: 500
-  allowed_hosts:
-    - api.example.com:443
-  allowed_services:
-    - paygate-reference-service
-protocol:
-  preferred: Payment
-  allow_l402: true
-lnd:
-  rest_url_env: "PAYGATE_CLIENT_LND_REST_URL"
-  macaroon_hex_env: "PAYGATE_CLIENT_LND_MACAROON_HEX"
-  tls_cert_path_env: "PAYGATE_CLIENT_LND_TLS_CERT_PATH"
-```
+## Local spend policy
 
-```bash
-export PAYGATE_CLIENT_LND_REST_URL="https://127.0.0.1:8080"
-export PAYGATE_CLIENT_LND_MACAROON_HEX="$(xxd -p -c 256 ~/.lnd/data/chain/bitcoin/mainnet/admin.macaroon)"
-export PAYGATE_CLIENT_LND_TLS_CERT_PATH="$HOME/.lnd/tls.cert"
-paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
-```
+Every paid request must pass all local checks:
 
-`paygate-client` calls LND REST `POST /v2/router/send` with
-`payment_request` and `fee_limit_sat`. It requires a terminal successful update
-with `payment_preimage`.
+- `policy.allowed_hosts` contains the exact target `host:port`.
+- `policy.allowed_services` contains the challenge service.
+- Invoice amount is no greater than `policy.max_request_sats`.
+- The payer can enforce `policy.max_fee_sats` before submission.
+- Retained counting spend stays within `policy.daily_budget_sats`.
 
-## Real-Money Backend: Breez SDK Spark
+Empty allowlists fail closed. Wildcards are not supported. Submitted-unknown
+payments remain counted because retrying could pay the same obligation twice.
 
-Breez SDK Spark can pay BOLT11 invoices without running a Lightning node. For
-Paygate, Spark preference is disabled so successful payments must return a
-Lightning preimage.
-
-Until `paygate-client` is published to PyPI, install optional Breez support
-from the verified source release:
-
-```bash
-pipx install --force "paygate-client[breez] @ git+https://github.com/greenharborlabs/paygate-client.git@e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
-```
-
-The Breez extra is required even when the base `paygate` command is already
-installed. After paygate-client is published to PyPI, the equivalent command
-will be `pipx install --force "paygate-client[breez]"`. `paygate backend doctor`
-loads the configured backend's local dependencies and exits nonzero before any
-invoice is created when the SDK is missing. If it reports a missing SDK,
-reinstall the same distribution you originally installed with its `breez` extra
-enabled; it does not install dependencies, load credentials, or create a
-payment.
-
-For local wallet checks from this repository, use the wrapper script. It uses
-the repo `.venv`, installs the Breez extra there if needed, and avoids
-Homebrew's externally managed Python restriction:
-
-```bash
-export BREEZ_API_KEY="replace-with-breez-api-key"
-export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
-scripts/check-breez-wallet.sh
-```
-
-To print wallet payment history, use the matching history wrapper:
-
-```bash
-scripts/breez-payment-history.sh
-scripts/breez-payment-history.sh --limit 10 --status completed
-scripts/breez-payment-history.sh --type send --from 2026-07-01T00:00:00Z
-```
-
-The history script outputs JSON, sorts newest first by default, and redacts
-sensitive fields such as preimages unless `--include-sensitive` is passed.
-
-```yaml
-payer:
-  backend: breez
-policy:
-  max_request_sats: 50
-  max_fee_sats: 10
-  daily_budget_sats: 500
-  allowed_hosts:
-    - api.example.com:443
-  allowed_services:
-    - paygate-reference-service
-protocol:
-  preferred: Payment
-  allow_l402: true
-breez:
-  api_key_env: "BREEZ_API_KEY"
-  mnemonic_env: "BREEZ_MNEMONIC"
-  network: mainnet
-  storage_dir: "~/.local/share/paygate-client/breez"
-  completion_timeout_secs: 10
-```
-
-```bash
-export BREEZ_API_KEY="replace-with-breez-api-key"
-export BREEZ_MNEMONIC="replace-with-wallet-seed-words"
-paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
-```
-
-For restart-persistent local operation, put those two `export` lines in the
-owner-only `~/.config/paygate-client/paygate-env.sh` companion file and set its
-mode to `0600`. Process environment values override the companion file. The
-legacy `voltage-env.sh` filename is read only when `paygate-env.sh` is absent.
-
-The Breez backend checks the prepared `lightning_fee_sats` before submitting the
-payment, sends with `prefer_spark=false`, and refuses success unless the returned
-preimage verifies against the payment hash.
-
-## Phoenixd
-
-Phoenixd support is a capability spike until `paygate backend doctor --json` and
-`paygate backend pay-invoice <bolt11> --json` prove that your Phoenixd API
-returns payment preimages and enforces the configured fee-limit parameter before
-payment.
-
-```yaml
-payer:
-  backend: phoenixd
-phoenixd:
-  url: "http://127.0.0.1:9740"
-  password_env: "PAYGATE_CLIENT_PHOENIXD_PASSWORD"
-  fee_limit_parameter: "maxFeeSat"
-```
-
-```bash
-export PAYGATE_CLIENT_PHOENIXD_PASSWORD="replace-with-phoenixd-password"
-paygate backend doctor --config ~/.config/paygate-client/config.yaml --json
-```
-
-See [docs/phoenixd-spike.md](docs/phoenixd-spike.md).
-
-## Backend Compatibility
-
-See [docs/payer-backend-compatibility.md](docs/payer-backend-compatibility.md).
-LNbits can be useful as a merchant or receiver backend. It is unsupported as an
-automated Paygate payer backend unless the configured funding source exposes
-payment preimages. Blink is not recommended for Paygate payer automation unless
-it exposes payer-side preimages and enforceable fee caps through a supported API.
-
-## Protocol Reference
+## Protocol reference
 
 MPP `Payment` challenge:
 
@@ -581,24 +299,9 @@ MPP `Payment` challenge:
 WWW-Authenticate: Payment realm="<service>", id="<challenge-id>", method="lightning", request="<base64url-json>", expires="<unix-seconds>", digest="<digest>", opaque="<base64url-json>"
 ```
 
-The `request` auth param is base64url without padding. It decodes to a JSON
-object:
-
-```json
-{
-  "invoice": "lnbc...",
-  "amountSats": 10,
-  "service": "paygate-reference-service",
-  "description": "optional text",
-  "methodDetails": {
-    "paymentHash": "<64 hex chars>"
-  }
-}
-```
-
-`amount_sats` and `payment_hash` are also accepted as snake-case aliases.
-`opaque`, when present, is also base64url without padding. In test fixtures it
-may decode to `{"test_preimage":"<64 hex chars>"}`.
+The `request` value is unpadded base64url JSON containing an amount-bearing
+BOLT11 invoice, amount, service, and payment hash. Snake-case aliases
+`amount_sats` and `payment_hash` are accepted.
 
 MPP retry credential:
 
@@ -606,123 +309,79 @@ MPP retry credential:
 Authorization: Payment <base64url-json>
 ```
 
-The credential payload is base64url-nopad JSON and has this shape:
-
-```json
-{
-  "challenge": {
-    "id": "<challenge-id>",
-    "realm": "<service>",
-    "method": "lightning",
-    "intent": "optional",
-    "expires": 1710000000,
-    "digest": "optional",
-    "description": "optional",
-    "opaque": "<base64url-json>",
-    "request": {
-      "invoice": "lnbc...",
-      "amountSats": 10,
-      "service": "paygate-reference-service",
-      "methodDetails": {
-        "paymentHash": "<64 hex chars>"
-      }
-    }
-  },
-  "payload": {
-    "preimage": "<64 lowercase hex chars>"
-  },
-  "source": "lnd-rest"
-}
-```
-
-`source` is optional. JSON is emitted compactly with sorted keys.
-
-L402 challenge:
+L402 challenge and retry credential:
 
 ```http
 WWW-Authenticate: L402 token="<token>", invoice="lnbc...", version="0"
-WWW-Authenticate: L402 macaroon="<macaroon>", invoice="lnbc..."
+Authorization: L402 <token-or-macaroon>:<64-lowercase-hex-preimage>
 ```
 
-L402 retry credential:
-
-```http
-Authorization: L402 <token-or-macaroon>:<64 lowercase hex preimage>
-```
-
-L402 must be enabled with `protocol.allow_l402: true`. For policy enforcement,
-the client derives the payment hash and amount from the BOLT11 invoice. Local
-test fixtures may provide `test_preimage` and `amountSats` in the 402 JSON body
-when using `test-mode`.
+L402 is accepted only when `protocol.allow_l402: true`. The Rust client derives
+the amount and payment hash from the signed BOLT11 invoice before applying
+policy.
 
 ## Troubleshooting
 
-`PAYER_BACKEND_MISSING_PREIMAGE` or `missing_preimage`: the payer reported
-success without a preimage. Use LND REST or another backend that returns the
-payment preimage.
+`PAYGATE_CONFIG_INVALID`: the YAML file is missing, malformed, contains
+duplicate/unsafe keys, names an unknown backend, or omits required fields.
 
-`PAYER_BACKEND_PREIMAGE_VERIFICATION_FAILED` or `preimage_verification_failed`:
-the returned preimage does not hash to the invoice payment hash. Treat the
-payment as suspect and do not retry manually with that credential.
+`PAYGATE_SECRET_MISSING`: a selected backend's referenced environment value is
+missing from the process environment or companion file.
 
-`PAYER_BACKEND_UNSUPPORTED_FEE_LIMIT` or `policy_denied`: the backend cannot
-enforce `max_fee_sats`, or local policy rejected the host, service, amount, fee
-cap, or daily budget.
+`PAYER_BACKEND_UNSUPPORTED_FEE_LIMIT`: the selected backend is not wired for
+the requested Rust CLI payment operation, or cannot prove pre-submission fee
+enforcement.
 
-`PAYGATE_SECRET_MISSING`: set the configured secret env var, such as
-`PAYGATE_CLIENT_LND_MACAROON_HEX`,
-`PAYGATE_CLIENT_LND_REST_URL`,
-`PAYGATE_CLIENT_LND_TLS_CERT_PATH`, or
-`PAYGATE_CLIENT_PHOENIXD_PASSWORD`. If you used
-`scripts/setup-voltage-paygate.sh`, make sure
-`~/.config/paygate-client/paygate-env.sh` exists next to
-`~/.config/paygate-client/config.yaml`; the CLI loads that generic companion
-file automatically. Existing installations that only have `voltage-env.sh`
-continue to use it as a legacy fallback. When `paygate-env.sh` exists, the two
-files are not merged, and process environment values retain precedence.
+`policy_denied`: host, service, amount, fee cap, or daily budget policy rejected
+the payment.
 
-`credentialCache.hit: true`: the request succeeded with a cached payment
-credential and did not pay a new invoice.
+`payment_submission_unknown`: submission may have reached the payer but its
+outcome is unknown. Do not retry automatically; reconcile the wallet and spend
+ledger first.
 
-`cached_credential_rejected`: the server rejected a cached credential with a
-non-`401`/`402` status. Purge the credential with `paygate credentials purge`
-and retry.
+`PAYER_BACKEND_PREIMAGE_VERIFICATION_FAILED` or
+`preimage_verification_failed`: the returned preimage does not hash to the
+invoice payment hash. Treat the result as unsafe and do not reuse it.
 
-`unsupported_402_challenge`: the response did not include a supported challenge,
-the challenge was malformed or expired, L402 was disabled, or L402 invoice
-metadata was insufficient to enforce policy before payment.
+`credential_state_failure`: the credential cache could not durably claim,
+store, update, or evict a credential. Authorization is withheld when durable
+state cannot be guaranteed.
+
+Exit code `75` with a maintenance-mode message means an installation or
+finalization recovery journal is active. Do not delete the journal. Resume the
+exact recorded recovery operation.
 
 ## Development
 
-Native Rust builds require Rust 1.88.0 (selected by `rust-toolchain.toml`) and
-the Protocol Buffer compiler used by the Breez/Spark build scripts. For example,
-install `protoc` with `brew install protobuf` on macOS or
-`sudo apt-get install protobuf-compiler` on Ubuntu/Debian, then run:
+Install Rust, `protoc`, and the Python development environment used by the
+compatibility suite. Then run:
 
 ```bash
-protoc --version
-cargo fetch --locked
-cargo check --locked --lib
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-```
 
-The Python compatibility oracle and legacy client checks use the editable
-development install:
-
-```bash
 python3 -m pip install -e ".[dev]"
-python3 -m pytest tests/test_config.py
-paygate --help
-paygate request --help
-paygate credentials --help
-paygate backend --help
-paygate backend doctor --help
-paygate backend pay-invoice --help
+python3 -m pytest
 ```
 
-See [docs/dev-setup.md](docs/dev-setup.md) for more local setup notes.
+Python commands here test compatibility and release tooling; they do not
+install the production Rust runtime. See [Developer setup](docs/dev-setup.md)
+for platform prerequisites and focused checks.
 
-The Rust cutover has a separate native qualification gate for Linux x86_64,
-Linux ARM64, macOS Intel, and macOS Apple Silicon. See
-[docs/platform-qualification.md](docs/platform-qualification.md) for the
-supported matrix, evidence contract, and dispatch procedure.
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Developer setup](docs/dev-setup.md)
+- [Payer backend compatibility](docs/payer-backend-compatibility.md)
+- [Native platform qualification](docs/platform-qualification.md)
+- [Release status and procedures](docs/releasing.md)
+- [Historical plans](plans/README.md)
+- [Historical reports](reports/README.md)
+
+The migration-era runbooks are retained for audit and recovery context. Do not
+use them for a fresh installation.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

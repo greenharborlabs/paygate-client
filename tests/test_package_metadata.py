@@ -230,6 +230,7 @@ def test_project_declares_release_metadata_and_breez_compatibility() -> None:
         "file": "PYPI_README.md",
         "content-type": "text/markdown",
     }
+    assert project["description"] == "Legacy Python compatibility client for Paygate."
     assert project["license"] == "MIT"
     assert project["license-files"] == ["LICENSE"]
     assert project["requires-python"] == ">=3.10,<3.15"
@@ -253,16 +254,18 @@ def test_project_declares_release_metadata_and_breez_compatibility() -> None:
     assert "Programming Language :: Python :: 3.14" in project["classifiers"]
 
 
-def test_pypi_readme_contains_only_post_publication_install_guidance() -> None:
+def test_pypi_readme_separates_legacy_python_from_rust_installation() -> None:
     readme = Path("PYPI_README.md").read_text()
 
     assert 'pipx install "paygate-client[breez]"' in readme
     assert "https://github.com/greenharborlabs/paygate-client" in readme
     assert "https://github.com/greenharborlabs/paygate-client/tree/main/docs" in readme
-    assert "unverified" in readme
+    assert "Legacy Python Paygate Client" in readme
+    assert "production client is now the Rust" in readme
+    assert "#install-the-rust-cli" in readme
     assert "declared" in readme
-    assert "W2 CI" in readme
-    assert "tested" not in readme.lower()
+    assert "tested" in readme.lower()
+    assert "W2 CI" not in readme
     assert "Breez support is supported" not in readme
 
 

@@ -1,6 +1,21 @@
 # Releasing `paygate-client`
 
-This project publishes only with PyPI Trusted Publishing. Do not create a PyPI
+## Current Rust distribution status
+
+The production client is the Rust `paygate` binary. It is not currently
+published to crates.io, and this repository has no prebuilt GitHub Release.
+Until a reviewed Rust release workflow exists, users install from a reviewed
+source commit with `cargo install --locked --path .` as documented in the
+[project README](../README.md).
+
+The existing `.github/workflows/publish.yml` publishes only the retained Python
+package. A successful PyPI release does not publish, install, attest, or update
+the Rust binary. Do not present `pipx install paygate-client` as the production
+Rust installation path.
+
+## Legacy Python package publication
+
+The Python package publishes only with PyPI Trusted Publishing. Do not create a PyPI
 API token, add one as a GitHub secret, upload GitHub release assets, retag a
 release, overwrite a package, or delete an immutable release/package to retry.
 

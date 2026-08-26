@@ -1,19 +1,11 @@
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-import venv
 from hashlib import sha256
-from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import pip
 import pytest
-from packaging.requirements import Requirement
-from packaging.version import Version
 
 from paygate_client.config import BreezConfig, SecretRef
 from paygate_client.payers.base import (
@@ -191,105 +183,34 @@ def test_breez_missing_sdk_is_reported_before_resolving_wallet_secrets(
     assert resolved == []
 
 
-def test_readme_breez_source_install_is_pinned_and_pypi_is_future_only() -> None:
+def test_readme_documents_pinned_rust_source_install() -> None:
     repository = Path(__file__).parents[1]
     readme = repository / "README.md"
     content = readme.read_text(encoding="utf-8")
-    requirement_text = (
-        "paygate-client[breez] @ "
-        "git+https://github.com/greenharborlabs/paygate-client.git@"
-        "e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
-    )
+    expected_commit = "ca087739b98e7f5259096234730d076eb0dc87b4"
 
-    requirement = Requirement(requirement_text)
+    assert "The production command is the Rust `paygate` binary" in content
+    assert "git clone https://github.com/greenharborlabs/paygate-client.git" in content
+    assert f"git checkout {expected_commit}" in content
+    assert "cargo install --locked --path ." in content
+    assert "paygate --version" in content
+    assert "pipx install" not in content
 
-    assert requirement.name == "paygate-client"
-    assert requirement.extras == {"breez"}
-    assert requirement.url == (
-        "git+https://github.com/greenharborlabs/paygate-client.git@"
-        "e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
-    )
-    assert requirement_text in content
-    bare_pypi_command = 'pipx install --force "paygate-client[breez]"'
-    assert content.count(bare_pypi_command) == 1
-    bare_command_offset = content.index(bare_pypi_command)
-    assert (
-        "After paygate-client is published to PyPI"
-        in content[bare_command_offset - 200 : bare_command_offset]
-    )
     example = (repository / "examples" / "paygate-client.yaml").read_text(
         encoding="utf-8"
     )
-    assert requirement_text in example
-    assert '"paygate-client[breez]"' not in example
+    assert "Python package install" not in example
+    assert "Breez SDK Spark is the supported Rust production payer" in example
 
 
-def test_readme_breez_requirement_installs_from_local_pinned_git_without_deps(
-    tmp_path: Path,
-) -> None:
+def test_readme_separates_rust_runtime_from_legacy_python() -> None:
     repository = Path(__file__).parents[1]
     content = (repository / "README.md").read_text(encoding="utf-8")
-    expected_commit = "e687fccb9a0a3d5ae9d3878b6e4fb4853df31901"
-    remote_requirement_text = (
-        "paygate-client[breez] @ git+https://github.com/greenharborlabs/"
-        f"paygate-client.git@{expected_commit}"
-    )
-    remote_requirement = Requirement(remote_requirement_text)
 
-    assert remote_requirement.url is not None
-    assert remote_requirement.url.endswith(expected_commit)
-    assert remote_requirement.extras == {"breez"}
-    assert remote_requirement_text in content
-
-    environment = tmp_path / "pip-validation"
-    venv.EnvBuilder(with_pip=True).create(environment)
-    executable = "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
-    python = environment / executable
-    local_requirement = (
-        f"paygate-client[breez] @ git+{repository.as_uri()}@{expected_commit}"
-    )
-    parsed_local_requirement = Requirement(local_requirement)
-
-    assert parsed_local_requirement.name == remote_requirement.name
-    assert parsed_local_requirement.extras == remote_requirement.extras
-    assert parsed_local_requirement.url is not None
-    assert parsed_local_requirement.url.endswith(expected_commit)
-
-    # ensurepip's bundled tooling can be too old for this PEP 621 project.
-    # The dev extra explicitly provides this compatible backend; expose the
-    # runner's local site-packages to the otherwise fresh venv rather than
-    # downloading build tooling during this offline validation.
-    assert Version(version("setuptools")) >= Version("77.0.3")
-    pip_package_root = str(Path(pip.__file__).resolve().parents[1])
-    python_path = os.environ.get("PYTHONPATH")
-    environment_variables = os.environ.copy()
-    environment_variables["PYTHONPATH"] = (
-        pip_package_root
-        if not python_path
-        else f"{pip_package_root}{os.pathsep}{python_path}"
-    )
-    result = subprocess.run(
-        [
-            str(python),
-            "-m",
-            "pip",
-            "install",
-            "--dry-run",
-            "--ignore-installed",
-            "--no-deps",
-            "--no-build-isolation",
-            local_requirement,
-        ],
-        capture_output=True,
-        text=True,
-        env=environment_variables,
-    )
-    # A fresh venv intentionally contains only ensurepip's bootstrap tooling.
-    # --dry-run still makes pip clone and resolve the pinned local Git reference,
-    # without requiring wheel or fetching the Breez extra's dependencies.
-    pip_output = result.stdout + result.stderr
-    assert result.returncode == 0, pip_output
-    assert f"Resolved {repository.as_uri()} to commit {expected_commit}" in pip_output
+    assert "Python code remains" in content
+    assert "It is not the primary runtime" in content
+    assert "Python commands here test compatibility and release tooling" in content
+    assert "Legacy Python Paygate Client" not in content
 
 
 def test_breez_rejects_prepared_fee_above_limit_before_send() -> None:

@@ -1,5 +1,10 @@
 # Wave 5 evidence publication
 
+> **Historical migration procedure:** this file describes the evidence process
+> designed for the completed Python-to-Rust migration. It is not the current
+> Rust install or release workflow. Current users should start with the
+> [project README](../README.md).
+
 This runbook begins only after a successful `rust-wave5-acceptance.yml` run. It
 publishes a reviewed copy of accepted evidence into the qualification report;
 it does not create acceptance. The uniquely named, retained, immutable
